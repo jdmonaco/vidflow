@@ -104,7 +104,7 @@ def transcribe_markdown(
             estimate = processor.estimate_tokens(document.sections)
             return OperationResult(
                 success=True,
-                message=f"Estimated {estimate['total_tokens']:,} tokens for {total_sections} sections",
+                message=f"Estimated {estimate:,} tokens for {total_sections} sections",
                 data={"estimate": estimate, "sections": total_sections},
             )
 
@@ -120,22 +120,12 @@ def transcribe_markdown(
                 },
             )
 
-        # Process all sections
-        results = processor.process_all_sections(document.sections)
-
-        # Fill in section content
-        for section, content in zip(document.sections, results):
-            section.content = content
-
-        # Generate frontmatter (title auto-generation)
-        full_transcript = "\n\n".join(
-            f"## {s.timestamp}\n{s.image_embed}\n{s.content}" for s in document.sections
-        )
+        # Process all sections via vidscribe
+        transcript_text, frontmatter_data = processor.process_all(document)
 
         if title:
             frontmatter_data = {"title": title}
         else:
-            frontmatter_data = processor.generate_frontmatter(full_transcript)
             title = frontmatter_data.get("title", "Untitled")
 
         # Determine output path
@@ -151,7 +141,7 @@ def transcribe_markdown(
         fm_yaml = yaml.dump(frontmatter_data, default_flow_style=False, sort_keys=False).strip()
         final_md = f"---\n{fm_yaml}\n---\n\n"
         final_md += f"# {title}\n\n"
-        final_md += full_transcript
+        final_md += transcript_text
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(final_md, encoding="utf-8")

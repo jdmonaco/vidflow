@@ -527,6 +527,15 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Main entry point for vidflow command."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Handle completion subcommand before argparse
+    if argv and argv[0] == "completion":
+        from vidflow.completion import completion_command
+
+        return completion_command(argv[1:])
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

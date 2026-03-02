@@ -6,7 +6,7 @@ Always read `~/tools/AGENTS.md` first for ecosystem-wide context and development
 
 ## Overview
 
-vidflow is an umbrella CLI that unifies the video processing pipeline: ytcapture (YouTube/local video frame extraction) and vidscribe (Claude Vision transcription). It bridges a key gap — YouTube videos captured by ytcapture include raw YouTube transcripts alongside extracted frames, but vidscribe expects empty skeleton sections (designed for vidcapture output). vidflow enables end-to-end workflows from video source to transcribed Obsidian note.
+vidflow is an umbrella CLI that unifies the video processing pipeline: ytcapture (YouTube/local video frame extraction) and vidscribe (Claude Vision transcription). It provides end-to-end workflows from video source to transcribed Obsidian note.
 
 ## Architecture
 
@@ -18,20 +18,18 @@ Flat subcommand structure:
 
 The `--transcribe` flag on `youtube` and `local` chains capture → transcription in one step.
 
-### The YouTube→vidscribe gap
+### Transcript handling
 
-ytcapture output has per-frame YouTube transcript text already present. vidscribe's parser (`parse_vidcapture_markdown`) discards text after image embeds. vidflow's `youtube.py` module provides:
+vidscribe natively handles pre-existing transcript text (e.g., YouTube auto-captions) via the `existing_text` field on `TimestampSection`. When `parse_vidcapture_markdown` encounters text after image embeds, it captures it into `existing_text`. The unified prompt and template builder include `<existing-transcript>` XML tags per section when this text is present, instructing Claude to enhance/correct it using visual frame context.
 
-1. **Transcript-preserving parser** — extends vidscribe's parsing to keep existing transcript text
-2. **Modified template construction** — includes `<existing-transcript>` XML tags per section
-3. **Adapted prompt** (`YOUTUBE_TEMPLATE_FILL_PROMPT`) — instructs Claude to enhance/correct existing transcripts using visual frame context
+This means both YouTube captures (with existing transcripts) and local captures (skeleton sections) flow through the same vidscribe `VidscribeProcessor` — no custom parser, prompt, or subclass needed in vidflow.
 
 ### Integration strategy
 
 vidflow imports ytcapture and vidscribe as library dependencies:
 - `ytcapture.cli.process_video()` / `process_local_video()` for capture
-- `vidscribe.VidscribeProcessor` for transcription orchestration
-- Custom YouTube processing path for transcript-aware pipeline
+- `vidscribe.parse_vidcapture_markdown()` for markdown parsing
+- `vidscribe.VidscribeProcessor.process_all()` for transcription orchestration
 
 ## Source layout
 
@@ -42,7 +40,7 @@ src/vidflow/
 ├── cli_common.py      # ExitCode, OperationResult (from SPEC.md)
 ├── capture.py         # Wrappers around ytcapture APIs
 ├── transcribe.py      # Wrapper around vidscribe VidscribeProcessor
-└── youtube.py         # YouTube transcript-aware parsing + adapted prompt
+└── youtube.py         # YouTube transcription (thin wrapper around vidscribe)
 tests/
 └── __init__.py
 ```
