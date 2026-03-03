@@ -1,5 +1,6 @@
-"""Configuration file handling for capture (ytcapture/vidcapture)."""
+"""Configuration file handling for vidflow capture."""
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 # Default config file content
 DEFAULT_CONFIG_YAML = """\
-# ytcapture/vidcapture configuration
-# Location: ~/.ytcapture.yml
+# vidflow capture configuration
+# Location: ~/.config/vidflow/config.yml
 #
 # Settings can be removed or commented out to use built-in defaults.
 # Built-in defaults are noted in [brackets] for each setting.
@@ -35,20 +36,37 @@ interval: 15           # Seconds between frames [15]
 frame_format: jpg      # jpg or png [jpg]
 dedup_threshold: 0.85  # 0.0-1.0, higher = more aggressive dedup [0.85]
 
-# ytcapture-specific defaults (YouTube video processing)
+# YouTube capture defaults
 language: en           # Transcript language code [en]
 prefer_manual: false   # Only use manual transcripts [false]
 keep_video: false      # Keep downloaded video file [false]
 ai_title: true         # Use AI (Claude Haiku) to generate concise titles [true]
 
-# vidcapture-specific defaults (local video processing)
+# Local video capture defaults
 fast: true             # Use fast keyframe seeking [true]
 """
 
+# Legacy config path (deprecated)
+_LEGACY_CONFIG_PATH = Path.home() / ".ytcapture.yml"
+
 
 def get_config_path() -> Path:
-    """Return the default config file path (~/.ytcapture.yml)."""
-    return Path.home() / ".ytcapture.yml"
+    """Return the config file path (~/.config/vidflow/config.yml).
+
+    Falls back to ~/.ytcapture.yml if it exists and the new path does not,
+    printing a deprecation notice to stderr.
+    """
+    new_path = Path.home() / ".config" / "vidflow" / "config.yml"
+    if new_path.exists():
+        return new_path
+    if _LEGACY_CONFIG_PATH.exists():
+        print(
+            f"Note: ~/.ytcapture.yml is deprecated. "
+            f"Move to {new_path} or delete to use defaults.",
+            file=sys.stderr,
+        )
+        return _LEGACY_CONFIG_PATH
+    return new_path
 
 
 def config_exists(path: Path | None = None) -> bool:
@@ -62,6 +80,7 @@ def init_config(path: Path | None = None) -> Path:
     config_path = path or get_config_path()
     if config_path.exists():
         raise FileExistsError(f"Config file already exists: {config_path}")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(DEFAULT_CONFIG_YAML, encoding="utf-8")
     return config_path
 
@@ -74,6 +93,7 @@ def load_config(path: Path | None = None) -> tuple[dict[str, Any], bool]:
     config = DEFAULT_CONFIG.copy()
 
     if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(DEFAULT_CONFIG_YAML, encoding="utf-8")
         was_created = True
 
@@ -129,6 +149,7 @@ def get_config_for_defaults() -> dict[str, Any]:
         _cached_config = DEFAULT_CONFIG.copy()
 
         if not config_path.exists():
+            config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(DEFAULT_CONFIG_YAML, encoding="utf-8")
             _config_was_created = True
         else:

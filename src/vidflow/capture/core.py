@@ -9,7 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from vidflow.capture.config import get_config_path, resolve_output_path
+from vidflow.capture.config import resolve_output_path
 from vidflow.capture.frames import FrameExtractionError, extract_frames_fast, extract_frames_from_file
 from vidflow.capture.local import LocalVideoError, LocalVideoMetadata, get_local_video_metadata
 from vidflow.capture.markdown import (
