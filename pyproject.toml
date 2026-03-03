@@ -22,12 +22,20 @@ classifiers = [
 dynamic = ["version"]
 
 dependencies = [
-    "ytcapture>=0.3.3",
-    "vidscribe>=1.1.0",
     "rich>=13.0.0",
+    "pyyaml>=6.0.0",
+    "Pillow>=10.0.0",
+    # capture (formerly ytcapture)
+    "yt-dlp>=2024.0.0",
+    "youtube-transcript-api>=0.6.0",
+    "python-dateutil>=2.8.0",
+    "imagehash>=4.3.0",
+    # transcribe (formerly vidscribe)
+    "anthropic>=0.18.0",
 ]
 
 [project.optional-dependencies]
+ai = ["anthropic>=0.40.0"]
 citations = ["exa-py>=1.0.0"]
 dev = [
     "pytest>=7.0.0",
@@ -38,6 +46,9 @@ dev = [
 
 [project.scripts]
 vidflow = "vidflow.cli:main"
+ytcapture = "vidflow.capture.cli:ytcapture_entry"
+vidcapture = "vidflow.capture.cli:vidcapture_entry"
+vidscribe = "vidflow.transcribe.cli:vidscribe_entry"
 
 [build-system]
 requires = ["hatchling"]
@@ -48,10 +59,6 @@ path = "src/vidflow/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vidflow"]
-
-[tool.uv.sources]
-ytcapture = { path = "../ytcapture", editable = true }
-vidscribe = { path = "../vidscribe", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,20 +1,6 @@
 # vidflow
 
-Unified video capture and transcription CLI. Bridges [ytcapture](../ytcapture) (YouTube/local video frame extraction) and [vidscribe](../vidscribe) (Claude Vision transcription) into a single end-to-end pipeline.
-
-## The problem
-
-ytcapture extracts frames from YouTube videos and includes auto-generated YouTube transcript text alongside each frame. vidscribe expects empty frame skeletons (designed for vidcapture local output) and transcribes from scratch using Claude Vision. There's no path from YouTube video → Claude-enhanced transcript that leverages both the existing YouTube text and visual frame analysis.
-
-## The solution
-
-vidflow provides:
-
-- **`vidflow youtube`** — Capture YouTube video frames, optionally transcribe in one step
-- **`vidflow local`** — Capture local video frames, optionally transcribe in one step
-- **`vidflow transcribe`** — Transcribe previously captured frame markdown files
-
-When transcribing YouTube captures, vidflow uses a transcript-aware pipeline that preserves existing YouTube transcript text and instructs Claude to enhance, correct, and augment it with visual context from frame images — rather than transcribing from scratch.
+Unified video capture and transcription CLI. Consolidates YouTube/local video frame extraction (formerly ytcapture) and Claude Vision transcription (formerly vidscribe) into a single installable package.
 
 ## Install
 
@@ -23,7 +9,13 @@ cd ~/tools/vidflow
 uv sync
 ```
 
-Requires sibling directories `../ytcapture` and `../vidscribe` (resolved via `[tool.uv.sources]`).
+Or install as a tool:
+
+```bash
+uv tool install ~/tools/vidflow
+```
+
+This provides four commands: `vidflow`, `ytcapture`, `vidcapture`, `vidscribe`.
 
 ## Usage
 
@@ -33,10 +25,13 @@ Requires sibling directories `../ytcapture` and `../vidscribe` (resolved via `[t
 # Capture frames only
 vidflow youtube https://youtube.com/watch?v=VIDEO_ID
 
-# Capture + transcribe in one step
-vidflow youtube https://youtube.com/watch?v=VIDEO_ID --transcribe
+# Bare video IDs also work
+ytcapture dQw4w9WgXcQ
 
-# Multiple videos, independent processing
+# Capture + transcribe in one step
+vidflow youtube URL --transcribe
+
+# Multiple videos
 vidflow youtube URL1 URL2 --transcribe
 
 # Multiple videos, merged into one transcript
@@ -72,6 +67,16 @@ vidflow transcribe capture.md --estimate-only
 vidflow transcribe capture.md --dry-run
 ```
 
+### Standalone commands
+
+The backward-compatible standalone entry points work the same as before:
+
+```bash
+ytcapture URL              # YouTube capture
+vidcapture meeting.mp4     # Local video capture
+vidscribe capture.md       # Transcription
+```
+
 ### Common options
 
 ```bash
@@ -99,26 +104,22 @@ vidflow transcribe capture.md -t "Workshop Day 1"
 
 ```
 vidflow youtube URL --transcribe
-  │
-  ├─ ytcapture.cli.process_video()     → capture markdown with YouTube transcript
-  │
-  └─ vidflow.youtube.transcribe_youtube()
-       ├─ parse_youtube_markdown()      → preserves existing transcript per section
-       ├─ build_youtube_template()      → <existing-transcript> tags in template
-       └─ process_youtube_batches()     → YouTube-adapted prompt + vidscribe infrastructure
+  |
+  +- vidflow.capture.core.process_video()      -> markdown with YouTube transcript
+  |
+  +- vidflow.youtube.transcribe_youtube()
+       +- parse_vidcapture_markdown()           -> preserves existing transcript per section
+       +- VidscribeProcessor.process_all()      -> Claude Vision transcription
 
 vidflow local file.mp4 --transcribe
-  │
-  ├─ ytcapture.cli.process_local_video()  → capture markdown (empty sections)
-  │
-  └─ vidflow.transcribe.transcribe_markdown()
-       └─ vidscribe.VidscribeProcessor     → standard skeleton transcription
-
-vidflow transcribe capture.md
-  │
-  └─ vidflow.transcribe.transcribe_markdown()
-       └─ vidscribe.VidscribeProcessor     → standard skeleton transcription
+  |
+  +- vidflow.capture.core.process_local_video() -> markdown (empty sections)
+  |
+  +- vidflow.transcribe.transcribe_markdown()
+       +- VidscribeProcessor.process_all()      -> standard skeleton transcription
 ```
+
+When transcribing YouTube captures, existing auto-caption text is passed to Claude via `<existing-transcript>` tags, instructing it to enhance and correct using visual frame context rather than transcribing from scratch.
 
 ## Multi-input behavior
 
@@ -130,4 +131,4 @@ vidflow transcribe capture.md
 
 ## Version
 
-0.1.0
+0.2.0

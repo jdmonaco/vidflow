@@ -6,59 +6,82 @@ Always read `~/tools/AGENTS.md` first for ecosystem-wide context and development
 
 ## Overview
 
-vidflow is an umbrella CLI that unifies the video processing pipeline: ytcapture (YouTube/local video frame extraction) and vidscribe (Claude Vision transcription). It provides end-to-end workflows from video source to transcribed Obsidian note.
+vidflow is a unified video capture and transcription CLI. It consolidates the former ytcapture (YouTube/local video frame extraction) and vidscribe (Claude Vision transcription) into a single installable package with four entry points: `vidflow`, `ytcapture`, `vidcapture`, and `vidscribe`.
 
 ## Architecture
 
-Flat subcommand structure:
+### Entry points
 
-- `vidflow youtube <url>...` — Capture YouTube video frames (wraps ytcapture)
-- `vidflow local <file>...` — Capture local video frames (wraps vidcapture)
-- `vidflow transcribe <markdown>...` — Transcribe captured frames (wraps vidscribe)
+- `vidflow youtube <url>...` — Capture YouTube video frames
+- `vidflow local <file>...` — Capture local video frames
+- `vidflow transcribe <markdown>...` — Transcribe captured frames
+- `ytcapture` — Standalone backward-compatible YouTube capture
+- `vidcapture` — Standalone backward-compatible local video capture
+- `vidscribe` — Standalone backward-compatible transcription
 
-The `--transcribe` flag on `youtube` and `local` chains capture → transcription in one step.
+The `--transcribe` flag on `youtube` and `local` chains capture and transcription in one step.
 
 ### Transcript handling
 
-vidscribe natively handles pre-existing transcript text (e.g., YouTube auto-captions) via the `existing_text` field on `TimestampSection`. When `parse_vidcapture_markdown` encounters text after image embeds, it captures it into `existing_text`. The unified prompt and template builder include `<existing-transcript>` XML tags per section when this text is present, instructing Claude to enhance/correct it using visual frame context.
+The transcribe module natively handles pre-existing transcript text (e.g., YouTube auto-captions) via the `existing_text` field on `TimestampSection`. When `parse_vidcapture_markdown` encounters text after image embeds, it captures it into `existing_text`. The unified prompt and template builder include `<existing-transcript>` XML tags per section when this text is present, instructing Claude to enhance/correct it using visual frame context.
 
-This means both YouTube captures (with existing transcripts) and local captures (skeleton sections) flow through the same vidscribe `VidscribeProcessor` — no custom parser, prompt, or subclass needed in vidflow.
-
-### Integration strategy
-
-vidflow imports ytcapture and vidscribe as library dependencies:
-- `ytcapture.cli.process_video()` / `process_local_video()` for capture
-- `vidscribe.parse_vidcapture_markdown()` for markdown parsing
-- `vidscribe.VidscribeProcessor.process_all()` for transcription orchestration
+Both YouTube captures (with existing transcripts) and local captures (skeleton sections) flow through the same `VidscribeProcessor`.
 
 ## Source layout
 
 ```
 src/vidflow/
-├── __init__.py        # __version__ only
-├── cli.py             # argparse entry point, subcommand dispatch
-├── cli_common.py      # ExitCode, OperationResult (from SPEC.md)
-├── capture.py         # Wrappers around ytcapture APIs
-├── transcribe.py      # Wrapper around vidscribe VidscribeProcessor
-└── youtube.py         # YouTube transcription (thin wrapper around vidscribe)
+├── __init__.py              # __version__
+├── cli.py                   # Unified vidflow entry point (argparse)
+├── cli_common.py            # ExitCode, OperationResult
+├── completion.py            # vidflow bash completion handler
+├── youtube.py               # YouTube-specific transcription wrapper
+├── data/
+│   └── completion.bash      # vidflow completion script
+├── capture/                 # Frame extraction (formerly ytcapture)
+│   ├── __init__.py          # Public API + OperationResult wrappers
+│   ├── cli.py               # Standalone ytcapture/vidcapture entry points
+│   ├── completion.py        # Capture completion handler
+│   ├── config.py            # ~/.ytcapture.yml config
+│   ├── core.py              # process_video(), process_local_video()
+│   ├── frames.py            # ffmpeg frame extraction
+│   ├── local.py             # Local video metadata (ffprobe)
+│   ├── markdown.py          # Obsidian markdown generation
+│   ├── metadata.py          # VideoMetadataProtocol
+│   ├── titling.py           # AI title generation (Claude Haiku)
+│   ├── transcript.py        # YouTube transcript fetching
+│   ├── utils.py             # URL parsing, formatting
+│   ├── video.py             # yt-dlp wrapper
+│   └── data/                # Bash completion scripts
+└── transcribe/              # Transcription (formerly vidscribe)
+    ├── __init__.py           # Public API + transcribe_markdown()
+    ├── cli.py                # Standalone vidscribe entry point
+    ├── models.py             # TimestampSection, VidcaptureDocument
+    ├── parser.py             # Markdown parsing, merge, resolve
+    ├── processor.py          # VidscribeProcessor
+    ├── prompts.py            # Prompt constants, API config
+    ├── image.py              # ImageMagick operations
+    └── output.py             # Output path, sanitize, context loading
 tests/
-└── __init__.py
+├── test_cli.py              # CLI entry point integration tests
+├── test_clipboard.py        # URL extraction and clipboard tests
+└── test_titling.py          # AI title generation tests
 ```
 
 ## Development
 
 ```bash
 cd ~/tools/vidflow
-uv sync                        # Install deps (resolves sibling projects)
+uv sync                        # Install all dependencies
 uv run vidflow --help           # Run CLI
-uv run pytest                   # Run tests
+uv run pytest tests/ -v         # Run tests
 uv run black src/ tests/        # Format
 uv run ruff check src/ tests/   # Lint
 ```
 
 ## Environment
 
-- `ANTHROPIC_API_KEY` — Required for transcription (`transcribe` subcommand and `--transcribe` flag)
+- `ANTHROPIC_API_KEY` — Required for transcription and AI title generation
 - `EXA_API_KEY` — Optional, enables citation search during transcription
 
 ## SPEC.md compliance

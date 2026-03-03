@@ -1,67 +1,70 @@
-"""Wrapper around vidscribe VidscribeProcessor for standard (skeleton) input.
+"""Transcription module for vidflow (formerly vidscribe).
 
-Handles transcription of vidcapture markdown files that have empty
-timestamp sections (no pre-existing transcript text).
+Provides Claude Vision-based transcription of video frame snapshots
+from vidcapture markdown files.
 """
 
-import os
-from pathlib import Path
-from typing import Optional
-
-from .cli_common import OperationResult
-
+from vidflow.transcribe.models import TimestampSection, VidcaptureDocument
+from vidflow.transcribe.parser import (
+    merge_vidcapture_documents,
+    parse_vidcapture_markdown,
+    resolve_image_path,
+)
+from vidflow.transcribe.processor import VidscribeProcessor
+from vidflow.transcribe.image import (
+    find_magick_command,
+    get_image_dimensions,
+    resize_image,
+)
+from vidflow.transcribe.output import (
+    determine_output_path,
+    handle_existing_output,
+    load_context_files,
+    sanitize_filename,
+    shorten_path,
+)
+from vidflow.transcribe.prompts import (
+    CITATION_SEARCH_PROMPT,
+    DEFAULT_MAX_DIMENSION,
+    EXA_SEARCH_TOOL,
+    FRONTMATTER_PROMPT,
+    MAX_REQUEST_SIZE_BYTES,
+    MAX_REQUEST_SIZE_MB,
+    MAX_TOOL_CALLS_PER_BATCH,
+    SUPPORTED_FORMATS,
+    TEMPLATE_FILL_PROMPT,
+)
 
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_CONTEXT_FRAMES = 3
 DEFAULT_TEMPERATURE = 0.2
-DEFAULT_MAX_DIMENSION = 1568
 
 
 def transcribe_markdown(
-    input_paths: list[Path],
-    output: Optional[Path] = None,
-    title: Optional[str] = None,
-    context_files: Optional[list[Path]] = None,
-    model: str = DEFAULT_MODEL,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    context_frames: int = DEFAULT_CONTEXT_FRAMES,
-    temperature: float = DEFAULT_TEMPERATURE,
-    max_dimension: int = DEFAULT_MAX_DIMENSION,
-    auto_confirm: bool = False,
-    dry_run: bool = False,
-    estimate_only: bool = False,
-    json_output: bool = False,
-) -> OperationResult:
-    """Transcribe one or more vidcapture markdown files.
+    input_paths,
+    output=None,
+    title=None,
+    context_files=None,
+    model=DEFAULT_MODEL,
+    batch_size=DEFAULT_BATCH_SIZE,
+    context_frames=DEFAULT_CONTEXT_FRAMES,
+    temperature=DEFAULT_TEMPERATURE,
+    max_dimension=DEFAULT_MAX_DIMENSION,
+    auto_confirm=False,
+    dry_run=False,
+    estimate_only=False,
+    json_output=False,
+):
+    """Transcribe vidcapture markdown files with OperationResult output.
 
-    Multiple inputs are merged into a single output (matching vidscribe behavior).
-
-    Args:
-        input_paths: Paths to vidcapture markdown files.
-        output: Explicit output path (auto-generated from title if None).
-        title: Override title (auto-generated from content if None).
-        context_files: Optional background context files.
-        model: Claude model to use.
-        batch_size: Frames per API batch.
-        context_frames: Number of previous frames for continuity context.
-        temperature: API temperature.
-        max_dimension: Max image dimension for resizing.
-        auto_confirm: Skip confirmation prompts.
-        dry_run: Show what would be done without processing.
-        estimate_only: Only estimate token usage.
-        json_output: Output JSON instead of human-readable messages.
-
-    Returns:
-        OperationResult with transcription results.
+    Multiple inputs are merged into a single output.
+    Used by the vidflow CLI layer.
     """
-    from vidscribe import (
-        VidscribeProcessor,
-        determine_output_path,
-        load_context_files,
-        merge_vidcapture_documents,
-        parse_vidcapture_markdown,
-    )
+    import os
+    from pathlib import Path
+
+    from vidflow.cli_common import OperationResult
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -74,20 +77,14 @@ def transcribe_markdown(
     exa_api_key = os.environ.get("EXA_API_KEY")
 
     try:
-        # Parse input documents
         documents = [parse_vidcapture_markdown(p) for p in input_paths]
-
-        # Merge if multiple inputs
         document = merge_vidcapture_documents(documents)
-
         total_sections = len(document.sections)
 
-        # Load context
         background_context = ""
         if context_files:
             background_context = load_context_files(context_files)
 
-        # Initialize processor
         processor = VidscribeProcessor(
             api_key=api_key,
             model=model,
@@ -120,7 +117,6 @@ def transcribe_markdown(
                 },
             )
 
-        # Process all sections via vidscribe
         transcript_text, frontmatter_data = processor.process_all(document)
 
         if title:
@@ -128,14 +124,12 @@ def transcribe_markdown(
         else:
             title = frontmatter_data.get("title", "Untitled")
 
-        # Determine output path
         output_path = determine_output_path(
             input_path=document.source_path,
             title=title,
             explicit_output=output,
         )
 
-        # Build final markdown
         import yaml
 
         fm_yaml = yaml.dump(frontmatter_data, default_flow_style=False, sort_keys=False).strip()
@@ -163,3 +157,38 @@ def transcribe_markdown(
             message=f"Transcription failed: {e}",
             errors=[str(e)],
         )
+
+
+__all__ = [
+    # Models
+    "TimestampSection",
+    "VidcaptureDocument",
+    # Parser
+    "parse_vidcapture_markdown",
+    "merge_vidcapture_documents",
+    "resolve_image_path",
+    # Processor
+    "VidscribeProcessor",
+    # Image
+    "find_magick_command",
+    "get_image_dimensions",
+    "resize_image",
+    # Output
+    "determine_output_path",
+    "handle_existing_output",
+    "load_context_files",
+    "sanitize_filename",
+    "shorten_path",
+    # Prompts/Constants
+    "CITATION_SEARCH_PROMPT",
+    "DEFAULT_MAX_DIMENSION",
+    "EXA_SEARCH_TOOL",
+    "FRONTMATTER_PROMPT",
+    "MAX_REQUEST_SIZE_BYTES",
+    "MAX_REQUEST_SIZE_MB",
+    "MAX_TOOL_CALLS_PER_BATCH",
+    "SUPPORTED_FORMATS",
+    "TEMPLATE_FILL_PROMPT",
+    # Convenience wrapper
+    "transcribe_markdown",
+]

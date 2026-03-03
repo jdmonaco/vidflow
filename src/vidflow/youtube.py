@@ -1,4 +1,4 @@
-"""YouTube-specific transcription via vidscribe.
+"""YouTube-specific transcription.
 
 Now that vidscribe natively handles pre-existing transcript text via
 TimestampSection.existing_text, this module is a thin wrapper that
@@ -53,7 +53,7 @@ def transcribe_youtube(
     Returns:
         OperationResult with transcription results.
     """
-    from vidscribe import (
+    from vidflow.transcribe import (
         VidscribeProcessor,
         determine_output_path,
         load_context_files,
@@ -71,7 +71,7 @@ def transcribe_youtube(
     exa_api_key = os.environ.get("EXA_API_KEY")
 
     try:
-        # Parse with vidscribe's native parser (now captures existing_text)
+        # Parse with vidscribe's native parser (captures existing_text)
         document = parse_vidcapture_markdown(input_path)
         total_sections = len(document.sections)
         sections_with_transcript = sum(
