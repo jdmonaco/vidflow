@@ -131,4 +131,4 @@ When transcribing YouTube captures, existing auto-caption text is passed to Clau
 
 ## Version
 
-0.2.0
+0.2.1

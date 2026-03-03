@@ -42,7 +42,7 @@ src/vidflow/
 │   ├── __init__.py          # Public API + OperationResult wrappers
 │   ├── cli.py               # Standalone ytcapture/vidcapture entry points
 │   ├── completion.py        # Capture completion handler
-│   ├── config.py            # ~/.ytcapture.yml config
+│   ├── config.py            # ~/.config/vidflow/config.yml
 │   ├── core.py              # process_video(), process_local_video()
 │   ├── frames.py            # ffmpeg frame extraction
 │   ├── local.py             # Local video metadata (ffprobe)
