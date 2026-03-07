@@ -68,11 +68,13 @@ def setup_logging(
         level = logging.INFO
 
     logging.basicConfig(
-        level=level,
+        level=logging.WARNING,
         format="%(levelname)s: %(message)s",
         stream=sys.stderr,
     )
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    return logger
 
 
 def add_common_args(parser) -> None:
