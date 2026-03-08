@@ -19,6 +19,12 @@ from vidflow.cli_common import (
     output_result,
     setup_logging,
 )
+from vidflow.models_config import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_CONTEXT_FRAMES,
+    DEFAULT_MODEL,
+    add_model_args,
+)
 
 
 def _add_transcribe_args(parser: argparse.ArgumentParser) -> None:
@@ -27,28 +33,18 @@ def _add_transcribe_args(parser: argparse.ArgumentParser) -> None:
     Used by youtube and local subcommands when --transcribe is set,
     and by the transcribe subcommand directly.
     """
-    parser.add_argument(
-        "-m", "--model",
-        default="claude-sonnet-4-20250514",
-        help="Claude model for transcription (default: claude-sonnet-4-20250514)",
-    )
+    add_model_args(parser)
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=10,
-        help="Frames per API batch (default: 10)",
+        default=DEFAULT_BATCH_SIZE,
+        help=f"Frames per API batch (default: {DEFAULT_BATCH_SIZE})",
     )
     parser.add_argument(
         "--context-frames",
         type=int,
-        default=3,
-        help="Previous frames for continuity context (default: 3)",
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0.2,
-        help="API temperature (default: 0.2)",
+        default=DEFAULT_CONTEXT_FRAMES,
+        help=f"Previous frames for continuity context (default: {DEFAULT_CONTEXT_FRAMES})",
     )
     parser.add_argument(
         "--max-dimension",
@@ -99,7 +95,7 @@ Commands:
 Examples:
   vidflow youtube https://youtube.com/watch?v=...
   vidflow youtube URL1 URL2 --transcribe
-  vidflow youtube URL --transcribe --merge -m claude-opus-4-20250514
+  vidflow youtube URL --transcribe --merge -m claude-sonnet-4-6
   vidflow local recording.mp4 --transcribe
   vidflow local *.mp4 --merge --transcribe
   vidflow transcribe part1.md part2.md -o combined.md

@@ -23,6 +23,12 @@ from vidflow.transcribe.output import (
     sanitize_filename,
     shorten_path,
 )
+from vidflow.models_config import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_CONTEXT_FRAMES,
+    DEFAULT_MODEL,
+    DEFAULT_TEMPERATURE,
+)
 from vidflow.transcribe.prompts import (
     CITATION_SEARCH_PROMPT,
     DEFAULT_MAX_DIMENSION,
@@ -34,11 +40,6 @@ from vidflow.transcribe.prompts import (
     SUPPORTED_FORMATS,
     TEMPLATE_FILL_PROMPT,
 )
-
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_BATCH_SIZE = 10
-DEFAULT_CONTEXT_FRAMES = 3
-DEFAULT_TEMPERATURE = 0.2
 
 
 def transcribe_markdown(

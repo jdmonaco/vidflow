@@ -21,6 +21,7 @@ from vidflow.transcribe.parser import (
     parse_vidcapture_markdown,
 )
 from vidflow.transcribe.processor import VidscribeProcessor
+from vidflow.models_config import DEFAULT_BATCH_SIZE, DEFAULT_CONTEXT_FRAMES, add_model_args
 from vidflow.transcribe.prompts import DEFAULT_MAX_DIMENSION
 
 
@@ -75,14 +76,14 @@ Examples:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=10,
-        help="Number of sections per API request (default: 10)",
+        default=DEFAULT_BATCH_SIZE,
+        help=f"Number of sections per API request (default: {DEFAULT_BATCH_SIZE})",
     )
     parser.add_argument(
         "--context-frames",
         type=int,
-        default=3,
-        help="Number of previous sections to include for context (default: 3)",
+        default=DEFAULT_CONTEXT_FRAMES,
+        help=f"Number of previous sections to include for context (default: {DEFAULT_CONTEXT_FRAMES})",
     )
     parser.add_argument(
         "--max-dimension",
@@ -98,19 +99,7 @@ Examples:
         default=os.environ.get("ANTHROPIC_API_KEY"),
         help="Anthropic API key (default: ANTHROPIC_API_KEY env var)",
     )
-    parser.add_argument(
-        "-m",
-        "--model",
-        default="claude-opus-4-6",
-        choices=["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"],
-        help="Claude model to use (default: claude-opus-4-6)",
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0.2,
-        help="Temperature for API calls (0.0-1.0, default: 0.2)",
-    )
+    add_model_args(parser)
 
     # Workflow control
     parser.add_argument(

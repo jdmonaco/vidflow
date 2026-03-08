@@ -12,6 +12,7 @@ from typing import Optional
 import yaml
 
 from .cli_common import OperationResult
+from .models_config import DEFAULT_BATCH_SIZE, DEFAULT_CONTEXT_FRAMES, DEFAULT_MODEL, DEFAULT_TEMPERATURE
 
 
 def transcribe_youtube(
@@ -19,10 +20,10 @@ def transcribe_youtube(
     output: Optional[Path] = None,
     title: Optional[str] = None,
     context_files: Optional[list[Path]] = None,
-    model: str = "claude-sonnet-4-20250514",
-    batch_size: int = 10,
-    context_frames: int = 3,
-    temperature: float = 0.2,
+    model: str = DEFAULT_MODEL,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    context_frames: int = DEFAULT_CONTEXT_FRAMES,
+    temperature: float = DEFAULT_TEMPERATURE,
     max_dimension: int = 1568,
     auto_confirm: bool = False,
     dry_run: bool = False,
