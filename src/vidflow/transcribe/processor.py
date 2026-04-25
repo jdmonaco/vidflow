@@ -61,9 +61,12 @@ class VidscribeProcessor:
         exa_api_key: Optional[str] = None,
     ):
         """Initialize the processor with API credentials and settings."""
+        from vidflow.models_config import DEFAULT_TEMPERATURE, model_accepts_temperature
+
         self.client = Anthropic(api_key=api_key)
         self.model = model
         self.temperature = temperature
+        self.supports_temperature = model_accepts_temperature(model)
         self.batch_size = batch_size
         self.context_frames = context_frames
         self.max_dimension = max_dimension
@@ -71,6 +74,12 @@ class VidscribeProcessor:
         self.json_output = json_output
         self.console = Console(quiet=json_output)
         self.magick_cmd = find_magick_command()
+
+        if not self.supports_temperature and temperature != DEFAULT_TEMPERATURE:
+            self.console.print(
+                f"[yellow]Warning:[/] model {model} rejects non-default sampling "
+                f"parameters; --temperature {temperature} will be ignored."
+            )
 
         # Exa citation search
         self.exa_enabled = False
@@ -145,9 +154,10 @@ class VidscribeProcessor:
                 stream_kwargs = dict(
                     model=self.model,
                     max_tokens=max_tokens,
-                    temperature=self.temperature,
                     messages=messages,
                 )
+                if self.supports_temperature:
+                    stream_kwargs["temperature"] = self.temperature
                 if tools:
                     stream_kwargs["tools"] = tools
 

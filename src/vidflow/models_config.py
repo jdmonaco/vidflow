@@ -8,11 +8,24 @@ import argparse
 
 # --- Model IDs ---
 
+MODEL_OPUS_47 = "claude-opus-4-7"
 MODEL_OPUS = "claude-opus-4-6"
 MODEL_SONNET = "claude-sonnet-4-6"
 MODEL_HAIKU = "claude-haiku-4-5"
 
-TRANSCRIBE_MODELS = [MODEL_OPUS, MODEL_SONNET, MODEL_HAIKU]
+# Opus 4.6 remains the default: 4.7 rejects non-default sampling params, and
+# transcription benefits from the low-temperature control we use.
+TRANSCRIBE_MODELS = [MODEL_OPUS, MODEL_OPUS_47, MODEL_SONNET, MODEL_HAIKU]
+
+# Models that reject non-default temperature/top_p/top_k with HTTP 400.
+# The API call must omit these params when using a model in this set.
+FIXED_SAMPLING_MODELS = frozenset({MODEL_OPUS_47})
+
+
+def model_accepts_temperature(model: str) -> bool:
+    """True if the model accepts non-default temperature/top_p/top_k params."""
+    return model not in FIXED_SAMPLING_MODELS
+
 
 # --- Transcription defaults ---
 

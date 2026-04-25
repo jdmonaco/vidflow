@@ -84,7 +84,7 @@ vidscribe capture.md       # Transcription
 vidflow youtube URL --json
 
 # Custom model
-vidflow youtube URL --transcribe -m claude-opus-4-20250514
+vidflow youtube URL --transcribe -m claude-sonnet-4-6
 
 # Background context for transcription
 vidflow transcribe capture.md -c agenda.md -c speakers.md
