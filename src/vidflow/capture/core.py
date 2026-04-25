@@ -9,8 +9,10 @@ from pathlib import Path
 
 from rich.console import Console
 
-from vidflow.capture.config import resolve_output_path
-from vidflow.capture.frames import FrameExtractionError, extract_frames_fast, extract_frames_from_file
+from vidflow.capture.frames import (
+    extract_frames_fast,
+    extract_frames_from_file,
+)
 from vidflow.capture.local import LocalVideoError, LocalVideoMetadata, get_local_video_metadata
 from vidflow.capture.markdown import (
     generate_local_markdown_filename,
@@ -18,9 +20,7 @@ from vidflow.capture.markdown import (
     generate_markdown_filename,
 )
 from vidflow.capture.transcript import TranscriptSegment, get_transcript, save_transcript_json
-from vidflow.capture.utils import format_timestamp
 from vidflow.capture.video import (
-    VideoError,
     VideoMetadata,
     download_video,
     get_video_metadata,
@@ -214,12 +214,21 @@ def process_local_video(
     fast: bool = False,
     json_output: bool = False,
     force: bool = False,
+    use_subtitles: bool = True,
+    subtitle_track: int | None = None,
 ) -> dict | Path:
     """Process a single local video file.
 
     Returns:
         Path to the generated markdown file, or dict if json_output.
     """
+    from vidflow.capture.subtitles import (
+        SubtitleError,
+        extract_subtitle_track,
+        probe_subtitle_streams,
+        select_subtitle_stream,
+    )
+
     out_console = Console(quiet=True) if json_output else console
 
     # 1. Get video metadata
@@ -229,6 +238,60 @@ def process_local_video(
     out_console.print("[green]+[/] Extracted video metadata")
     out_console.print(f"  [dim]Title:[/] {metadata.title}")
     out_console.print(f"  [dim]Duration:[/] {metadata.duration:.1f}s")
+
+    # 1b. Probe and extract embedded subtitles
+    transcript: list | None = None
+    if use_subtitles or subtitle_track is not None:
+        try:
+            streams = probe_subtitle_streams(video_path)
+        except SubtitleError as e:
+            out_console.print(f"  [yellow]![/] Subtitle probe failed: {e}")
+            streams = []
+
+        if streams:
+            if len(streams) > 1 and subtitle_track is None:
+                out_console.print(
+                    f"  [dim]Found {len(streams)} subtitle tracks:[/]"
+                )
+                for s in streams:
+                    out_console.print(f"    [dim]- {s.describe()}[/]")
+
+            try:
+                chosen = select_subtitle_stream(
+                    streams, track=subtitle_track, language="en",
+                )
+            except SubtitleError as e:
+                out_console.print(f"  [yellow]![/] {e}")
+                chosen = None
+
+            if chosen is None:
+                out_console.print(
+                    "  [yellow]![/] No text-based subtitle track selectable"
+                )
+            elif not chosen.is_text_based:
+                out_console.print(
+                    f"  [yellow]![/] Selected track codec '{chosen.codec}' is not "
+                    "text-based; skipping subtitle extraction"
+                )
+            else:
+                try:
+                    with out_console.status(
+                        "[bold blue]Extracting embedded subtitles...", spinner="dots"
+                    ):
+                        transcript = extract_subtitle_track(video_path, chosen)
+                    if transcript:
+                        out_console.print(
+                            f"[green]+[/] Extracted {len(transcript)} subtitle cues "
+                            f"from track {chosen.describe()}"
+                        )
+                        metadata.subtitle_source = chosen.describe()
+                    else:
+                        out_console.print(
+                            f"  [yellow]![/] Subtitle track {chosen.describe()} "
+                            "yielded no cues"
+                        )
+                except SubtitleError as e:
+                    out_console.print(f"  [yellow]![/] Subtitle extraction failed: {e}")
 
     # Check if output file already exists
     md_filename = generate_local_markdown_filename(metadata)
@@ -282,12 +345,12 @@ def process_local_video(
     dedup_msg = "" if no_dedup else " (deduplicated)"
     out_console.print(f"[green]+[/] Extracted {len(frames)} frames{dedup_msg}")
 
-    # 4. Generate markdown (no transcript for local videos)
+    # 4. Generate markdown (with embedded-subtitle transcript if available)
     with out_console.status("[bold blue]Generating markdown...", spinner="dots"):
         md_file = generate_markdown_file(
             metadata,
             url=None,
-            transcript=None,
+            transcript=transcript,
             frames=frames,
             output_dir=output_dir,
             video_path=None,
@@ -307,5 +370,7 @@ def process_local_video(
             "frames_dir": str(frames_dir.resolve()),
             "frame_count": len(frames),
             "markdown": str(md_file.resolve()),
+            "subtitle_source": metadata.subtitle_source,
+            "subtitle_cue_count": len(transcript) if transcript else 0,
         }
     return md_file

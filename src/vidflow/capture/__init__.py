@@ -33,7 +33,7 @@ def capture_youtube(
     url: str,
     output_dir: Path,
     interval: int = 15,
-    max_frames: Optional[int] = None,
+    max_frames: int | None = None,
     frame_format: str = "jpg",
     language: str = "en",
     prefer_manual: bool = False,
@@ -79,13 +79,15 @@ def capture_local(
     video_path: Path,
     output_dir: Path,
     interval: int = 15,
-    max_frames: Optional[int] = None,
+    max_frames: int | None = None,
     frame_format: str = "jpg",
     dedup_threshold: float = 0.95,
     no_dedup: bool = False,
     fast: bool = False,
     force: bool = False,
     json_output: bool = False,
+    use_subtitles: bool = True,
+    subtitle_track: int | None = None,
 ):
     """Capture local video with OperationResult output.
 
@@ -105,6 +107,8 @@ def capture_local(
             fast=fast,
             json_output=json_output,
             force=force,
+            use_subtitles=use_subtitles,
+            subtitle_track=subtitle_track,
         )
         if isinstance(result, dict):
             md_path = result.get("output_file", str(video_path))

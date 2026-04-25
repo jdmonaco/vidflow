@@ -22,7 +22,6 @@ from vidflow.capture.config import (
     resolve_output_path,
 )
 from vidflow.capture.core import (
-    format_markdown,
     process_local_video,
     process_video,
     shorten_path,
@@ -307,6 +306,18 @@ Examples:
         help="Use fast keyframe seeking (default)",
     )
     parser.add_argument("--no-fast", action="store_true", help="Disable fast keyframe seeking")
+    parser.add_argument(
+        "--no-subtitles", action="store_true",
+        help="Ignore embedded subtitle tracks (skip extraction)",
+    )
+    parser.add_argument(
+        "--subtitle-track", type=int, metavar="N",
+        help="Use subtitle track index N (0-based among subtitle streams)",
+    )
+    parser.add_argument(
+        "--list-subtitles", action="store_true",
+        help="List embedded subtitle tracks and exit (no capture)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument(
         "--json", dest="json_output", action="store_true",
@@ -327,6 +338,53 @@ Examples:
             print(json.dumps({"status": "error", "error": "No video files provided"}))
             return 1
         parser.error("No video files provided. Pass paths to video files as arguments.")
+
+    # --list-subtitles is a pure inspection mode; no capture/transcription
+    if args.list_subtitles:
+        from vidflow.capture.subtitles import SubtitleError, probe_subtitle_streams
+
+        all_data = []
+        exit_code = 0
+        for file_path in args.files:
+            video_path = Path(file_path)
+            entry: dict = {"file": str(video_path)}
+            try:
+                streams = probe_subtitle_streams(video_path)
+            except SubtitleError as e:
+                entry["error"] = str(e)
+                exit_code = 1
+                if not args.json_output:
+                    out_console.print(f"[red]x[/] {video_path}: {e}")
+                all_data.append(entry)
+                continue
+
+            entry["tracks"] = [
+                {
+                    "subtitle_index": s.subtitle_index,
+                    "stream_index": s.index,
+                    "codec": s.codec,
+                    "language": s.language,
+                    "title": s.title,
+                    "default": s.is_default,
+                    "forced": s.is_forced,
+                    "hearing_impaired": s.is_hearing_impaired,
+                    "text_based": s.is_text_based,
+                }
+                for s in streams
+            ]
+            all_data.append(entry)
+
+            if not args.json_output:
+                out_console.print(f"[bold]{video_path}:[/]")
+                if not streams:
+                    out_console.print("  [dim](no embedded subtitle tracks)[/]")
+                else:
+                    for s in streams:
+                        out_console.print(f"  {s.describe()}")
+
+        if args.json_output:
+            print(json.dumps(all_data, indent=2))
+        return exit_code
 
     # Determine output directory
     if args.output:
@@ -355,6 +413,8 @@ Examples:
                 video_path, output_dir, args.interval, args.max_frames,
                 args.frame_format, args.dedup_threshold, args.no_dedup,
                 fast, args.json_output, args.force,
+                use_subtitles=not args.no_subtitles,
+                subtitle_track=args.subtitle_track,
             )
             if args.json_output:
                 results.append(result)  # type: ignore[arg-type]

@@ -9,7 +9,6 @@ Provides subcommands for video capture and transcription:
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 
 from vidflow import __version__
 from vidflow.cli_common import (
@@ -22,7 +21,6 @@ from vidflow.cli_common import (
 from vidflow.models_config import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CONTEXT_FRAMES,
-    DEFAULT_MODEL,
     add_model_args,
 )
 
@@ -236,6 +234,22 @@ Examples:
         help="Overwrite existing output files",
     )
     local_parser.add_argument(
+        "--no-subtitles",
+        action="store_true",
+        help="Ignore embedded subtitle tracks (skip extraction)",
+    )
+    local_parser.add_argument(
+        "--subtitle-track",
+        type=int,
+        metavar="N",
+        help="Use subtitle track index N (0-based among subtitle streams)",
+    )
+    local_parser.add_argument(
+        "--list-subtitles",
+        action="store_true",
+        help="List embedded subtitle tracks and exit (no capture)",
+    )
+    local_parser.add_argument(
         "--transcribe",
         action="store_true",
         help="Also transcribe captured frames with Claude Vision",
@@ -378,9 +392,65 @@ def _transcribe_youtube_captures(
     return results
 
 
+def _list_subtitles(args: argparse.Namespace) -> int:
+    """Print embedded subtitle tracks for each input file and exit."""
+    import json as _json
+
+    from vidflow.capture.subtitles import SubtitleError, probe_subtitle_streams
+
+    all_data = []
+    exit_code = ExitCode.SUCCESS
+
+    for video_path in args.files:
+        entry: dict = {"file": str(video_path)}
+        try:
+            streams = probe_subtitle_streams(video_path)
+        except SubtitleError as e:
+            entry["error"] = str(e)
+            exit_code = ExitCode.ERROR
+            if not args.json_output:
+                print(f"{video_path}: ERROR: {e}", file=sys.stderr)
+            all_data.append(entry)
+            continue
+
+        entry["tracks"] = [
+            {
+                "subtitle_index": s.subtitle_index,
+                "stream_index": s.index,
+                "codec": s.codec,
+                "language": s.language,
+                "title": s.title,
+                "default": s.is_default,
+                "forced": s.is_forced,
+                "hearing_impaired": s.is_hearing_impaired,
+                "text_based": s.is_text_based,
+            }
+            for s in streams
+        ]
+        all_data.append(entry)
+
+        if not args.json_output:
+            print(f"{video_path}:")
+            if not streams:
+                print("  (no embedded subtitle tracks)")
+            else:
+                for s in streams:
+                    print(f"  {s.describe()}")
+
+    if args.json_output:
+        print(_json.dumps(all_data, indent=2))
+
+    return exit_code
+
+
 def cmd_local(args: argparse.Namespace) -> int:
     """Handle the local subcommand."""
     logger = setup_logging(args.verbose, args.quiet)
+
+    # --list-subtitles is a pure inspection mode; no capture/transcription
+    if getattr(args, "list_subtitles", False):
+        return _list_subtitles(args)
+
     output_dir = args.output or Path.cwd()
     errors = []
     all_results = []
@@ -403,6 +473,8 @@ def cmd_local(args: argparse.Namespace) -> int:
             fast=fast,
             force=args.force,
             json_output=args.json_output,
+            use_subtitles=not args.no_subtitles,
+            subtitle_track=args.subtitle_track,
         )
 
         if result.success and result.data:
@@ -521,7 +593,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     return ExitCode.SUCCESS if result.success else ExitCode.ERROR
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Main entry point for vidflow command."""
     if argv is None:
         argv = sys.argv[1:]

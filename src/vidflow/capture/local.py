@@ -23,6 +23,7 @@ class LocalVideoMetadata:
     duration: float
     creation_date: str  # YYYYMMDD format
     _identifier_suffix: int = 0
+    subtitle_source: str | None = None  # Describes extracted sub track, if any
 
     @property
     def identifier(self) -> str:
