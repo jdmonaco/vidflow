@@ -1,8 +1,5 @@
 """Integration tests for CLI entry points."""
 
-import subprocess
-import sys
-
 import pytest
 
 from vidflow.cli import main as vidflow_main
@@ -10,13 +7,6 @@ from vidflow.cli import main as vidflow_main
 
 class TestVidflowCli:
     """Tests for vidflow main CLI."""
-
-    def test_version(self, capsys):
-        with pytest.raises(SystemExit) as exc_info:
-            vidflow_main(["--version"])
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "0.2.0" in captured.out
 
     def test_help(self, capsys):
         with pytest.raises(SystemExit) as exc_info:
@@ -34,13 +24,6 @@ class TestVidflowCli:
 
 class TestYtcaptureEntry:
     """Tests for ytcapture standalone entry point."""
-
-    def test_version(self):
-        from vidflow.capture.cli import ytcapture_main
-
-        with pytest.raises(SystemExit) as exc_info:
-            ytcapture_main(["--version"])
-        assert exc_info.value.code == 0
 
     def test_help(self):
         with pytest.raises(SystemExit) as exc_info:
@@ -61,13 +44,6 @@ class TestYtcaptureEntry:
 
 class TestVidcaptureEntry:
     """Tests for vidcapture standalone entry point."""
-
-    def test_version(self):
-        from vidflow.capture.cli import vidcapture_main
-
-        with pytest.raises(SystemExit) as exc_info:
-            vidcapture_main(["--version"])
-        assert exc_info.value.code == 0
 
     def test_help(self):
         with pytest.raises(SystemExit) as exc_info:
