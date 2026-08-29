@@ -29,11 +29,14 @@ dependencies = [
     "youtube-transcript-api>=0.6.0",
     "python-dateutil>=2.8.0",
     "imagehash>=4.3.0",
-    "anthropic>=0.18.0",
+    "aikit>=0.1",
+    "anthropic>=0.40.0",
 ]
 
+[tool.uv.sources]
+aikit = { path = "../aikit", editable = true }
+
 [project.optional-dependencies]
-ai = ["anthropic>=0.40.0"]
 citations = ["exa-py>=1.0.0"]
 dev = [
     "pytest>=7.0.0",

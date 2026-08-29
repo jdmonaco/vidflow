@@ -18,41 +18,27 @@ from vidflow.capture.titling import (
 class TestIsAiTitlingAvailable:
     """Tests for is_ai_titling_available()."""
 
-    def test_available_with_sdk_and_key(self):
-        """Available when both SDK and key are present."""
-        mock_anthropic = MagicMock()
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
-            with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
-                assert is_ai_titling_available() is True
-
-    def test_unavailable_without_key(self):
-        """Not available when ANTHROPIC_API_KEY is unset."""
+    def test_available_with_aikit(self):
+        """Available whenever aikit is importable -- no API key needed."""
         env = os.environ.copy()
         env.pop("ANTHROPIC_API_KEY", None)
         with patch.dict(os.environ, env, clear=True):
-            assert is_ai_titling_available() is False
+            assert is_ai_titling_available() is True
 
-    def test_unavailable_without_sdk(self):
-        """Not available when anthropic SDK is not installed."""
+    def test_unavailable_without_aikit(self):
+        """Not available when aikit is not installed."""
         import builtins
 
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
-            if name == "anthropic":
-                raise ImportError("No module named 'anthropic'")
+            if name == "aikit":
+                raise ImportError("No module named 'aikit'")
             return real_import(name, *args, **kwargs)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
-            # Remove from sys.modules if cached
-            with patch.dict(sys.modules, {"anthropic": None}):
-                with patch("builtins.__import__", side_effect=mock_import):
-                    assert is_ai_titling_available() is False
-
-    def test_unavailable_with_empty_key(self):
-        """Not available when ANTHROPIC_API_KEY is empty string."""
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}):
-            assert is_ai_titling_available() is False
+        with patch.dict(sys.modules, {"aikit": None}):
+            with patch("builtins.__import__", side_effect=mock_import):
+                assert is_ai_titling_available() is False
 
 
 class TestCleanTitle:
@@ -81,15 +67,13 @@ class TestCleanTitle:
         assert _clean_title("") == ""
 
 
-def _make_mock_anthropic(response_text):
-    """Create a mock anthropic module with a preconfigured response."""
-    mock_module = MagicMock()
+def _make_mock_local_client(response_text):
+    """Create a mock openai-style client with a preconfigured response."""
     mock_client = MagicMock()
-    mock_module.Anthropic.return_value = mock_client
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(text=response_text)]
-    mock_client.messages.create.return_value = mock_response
-    return mock_module, mock_client
+    mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
+    mock_client.chat.completions.create.return_value = mock_response
+    return mock_client
 
 
 class TestValidateTitle:
@@ -122,11 +106,11 @@ class TestGenerateAiTitle:
 
     def test_successful_generation(self):
         """Successful API call produces a valid AI title."""
-        mock_module, mock_client = _make_mock_anthropic(
+        mock_client = _make_mock_local_client(
             "Ilya Sutskever - Scaling Neural Networks"
         )
 
-        with patch.dict(sys.modules, {"anthropic": mock_module}):
+        with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
                 title="NVIDIA GTC 2025: Ilya Sutskever on Why Scaling Neural Networks Changed Everything",
                 channel="NVIDIA",
@@ -139,9 +123,9 @@ class TestGenerateAiTitle:
 
     def test_validation_failure_falls_back(self):
         """Invalid AI output falls back to original title."""
-        mock_module, mock_client = _make_mock_anthropic("X")  # Too short
+        mock_client = _make_mock_local_client("X")  # Too short
 
-        with patch.dict(sys.modules, {"anthropic": mock_module}):
+        with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
                 title="Original Title Here",
                 channel="Channel",
@@ -153,12 +137,12 @@ class TestGenerateAiTitle:
 
     def test_api_timeout_falls_back(self):
         """API timeout falls back to original title."""
-        mock_module = MagicMock()
         mock_client = MagicMock()
-        mock_module.Anthropic.return_value = mock_client
-        mock_client.messages.create.side_effect = TimeoutError("Request timed out")
+        mock_client.chat.completions.create.side_effect = TimeoutError(
+            "Request timed out"
+        )
 
-        with patch.dict(sys.modules, {"anthropic": mock_module}):
+        with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
                 title="Original Title",
                 channel="Channel",
@@ -168,14 +152,14 @@ class TestGenerateAiTitle:
         assert result.used_ai is False
         assert result.ai_title == "Original Title"
 
-    def test_auth_error_falls_back(self):
-        """Authentication error falls back to original title."""
-        mock_module = MagicMock()
+    def test_gateway_error_falls_back(self):
+        """Gateway error (slot unavailable, host asleep) falls back."""
         mock_client = MagicMock()
-        mock_module.Anthropic.return_value = mock_client
-        mock_client.messages.create.side_effect = Exception("Invalid API key")
+        mock_client.chat.completions.create.side_effect = Exception(
+            "admission_refused"
+        )
 
-        with patch.dict(sys.modules, {"anthropic": mock_module}):
+        with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
                 title="Original Title",
                 channel="Channel",
@@ -186,17 +170,17 @@ class TestGenerateAiTitle:
         assert result.ai_title == "Original Title"
 
     def test_import_error_falls_back(self):
-        """Missing anthropic SDK falls back to original title."""
+        """Missing aikit falls back to original title."""
         import builtins
 
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
-            if name == "anthropic":
-                raise ImportError("No module named 'anthropic'")
+            if name == "aikit":
+                raise ImportError("No module named 'aikit'")
             return real_import(name, *args, **kwargs)
 
-        with patch.dict(sys.modules, {"anthropic": None}):
+        with patch.dict(sys.modules, {"aikit": None}):
             with patch("builtins.__import__", side_effect=mock_import):
                 result = generate_ai_title(
                     title="Original Title",
@@ -209,11 +193,11 @@ class TestGenerateAiTitle:
 
     def test_quoted_output_cleaned(self):
         """Quoted LLM output is cleaned before validation."""
-        mock_module, mock_client = _make_mock_anthropic(
+        mock_client = _make_mock_local_client(
             '"John Smith - Deep Learning Basics"'
         )
 
-        with patch.dict(sys.modules, {"anthropic": mock_module}):
+        with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
                 title="Some Long Original Title",
                 channel="Channel",
@@ -225,13 +209,11 @@ class TestGenerateAiTitle:
 
     def test_description_truncated(self):
         """Description longer than 500 chars is truncated in the API call."""
-        mock_module, mock_client = _make_mock_anthropic(
-            "Jane Doe - Research Overview"
-        )
+        mock_client = _make_mock_local_client("Jane Doe - Research Overview")
 
         long_desc = "x" * 1000
 
-        with patch.dict(sys.modules, {"anthropic": mock_module}):
+        with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
                 title="Title",
                 channel="Channel",
@@ -239,8 +221,8 @@ class TestGenerateAiTitle:
             )
 
         # Verify the API was called with truncated description
-        call_args = mock_client.messages.create.call_args
-        user_msg = call_args[1]["messages"][0]["content"]
+        call_args = mock_client.chat.completions.create.call_args
+        user_msg = call_args[1]["messages"][-1]["content"]
         assert "x" * 501 not in user_msg
         assert result.used_ai is True
 

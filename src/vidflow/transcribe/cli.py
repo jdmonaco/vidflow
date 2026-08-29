@@ -97,7 +97,7 @@ Examples:
         "-k",
         "--api-key",
         default=os.environ.get("ANTHROPIC_API_KEY"),
-        help="Anthropic API key (default: ANTHROPIC_API_KEY env var)",
+        help="Anthropic API key, only needed for claude-* models (default: ANTHROPIC_API_KEY env var)",
     )
     add_model_args(parser)
 
@@ -133,11 +133,15 @@ Examples:
 
     args = parser.parse_args(argv)
 
-    # Validate API key
-    if not args.api_key and not args.dry_run and not args.estimate_only:
+    # Validate API key (Anthropic lane only; the local gateway needs none)
+    import aikit
+
+    provider = aikit.provider_for(args.model, args.provider)
+    if (provider == "anthropic" and not args.api_key
+            and not args.dry_run and not args.estimate_only):
         parser.error(
-            "Anthropic API key required. Set ANTHROPIC_API_KEY environment "
-            "variable or use -k/--api-key"
+            "Anthropic API key required for claude-* models. Set "
+            "ANTHROPIC_API_KEY environment variable or use -k/--api-key"
         )
 
     # Validate temperature
@@ -274,6 +278,7 @@ Examples:
             background_context,
             args.json_output,
             exa_api_key=exa_api_key,
+            provider=args.provider,
         )
     except Exception as e:
         log_err(f"Initialization failed: {e}")

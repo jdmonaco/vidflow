@@ -1,44 +1,48 @@
-"""Tests for model ID registry and sampling-param compatibility."""
+"""Tests for model defaults, provider inference, and sampling compatibility."""
+
+import aikit
 
 from vidflow.models_config import (
     DEFAULT_MODEL,
     FIXED_SAMPLING_MODELS,
+    LOCAL_QUICK,
     MODEL_HAIKU,
     MODEL_OPUS,
-    MODEL_OPUS_47,
     MODEL_SONNET,
-    TRANSCRIBE_MODELS,
     model_accepts_temperature,
 )
 
 
-def test_default_is_opus_4_6():
-    # Intentionally pinned: Opus 4.7 rejects non-default temperature,
-    # and transcription relies on temperature control.
-    assert DEFAULT_MODEL == MODEL_OPUS
-    assert MODEL_OPUS == "claude-opus-4-6"
+def test_default_is_local_primary():
+    # Local inference is the default lane; claude-* is the escape hatch.
+    assert DEFAULT_MODEL == "primary"
+    assert LOCAL_QUICK == "quick"
 
 
-def test_opus_4_7_available_as_choice():
-    assert MODEL_OPUS_47 in TRANSCRIBE_MODELS
-    assert MODEL_OPUS_47 == "claude-opus-4-7"
+def test_provider_inference():
+    assert aikit.provider_for(DEFAULT_MODEL) == "local"
+    assert aikit.provider_for(MODEL_OPUS) == "anthropic"
 
 
-def test_all_current_models_present():
-    assert set(TRANSCRIBE_MODELS) == {
-        MODEL_OPUS, MODEL_OPUS_47, MODEL_SONNET, MODEL_HAIKU,
-    }
+def test_escape_hatch_models_are_current():
+    assert MODEL_OPUS == "claude-opus-5"
+    assert MODEL_SONNET == "claude-sonnet-5"
+    assert MODEL_HAIKU == "claude-haiku-4-5"
 
 
-def test_opus_4_7_rejects_temperature():
-    assert MODEL_OPUS_47 in FIXED_SAMPLING_MODELS
-    assert not model_accepts_temperature(MODEL_OPUS_47)
+def test_five_family_rejects_temperature():
+    for model in (MODEL_OPUS, MODEL_SONNET, "claude-fable-5",
+                  "claude-opus-4-8", "claude-opus-4-7"):
+        assert model in FIXED_SAMPLING_MODELS
+        assert not model_accepts_temperature(model)
 
 
 def test_other_models_accept_temperature():
-    assert model_accepts_temperature(MODEL_OPUS)
-    assert model_accepts_temperature(MODEL_SONNET)
     assert model_accepts_temperature(MODEL_HAIKU)
+    assert model_accepts_temperature("claude-opus-4-6")
+    # Local slots always accept temperature
+    assert model_accepts_temperature(DEFAULT_MODEL)
+    assert model_accepts_temperature(LOCAL_QUICK)
 
 
 def test_unknown_model_defaults_to_accepting_temperature():

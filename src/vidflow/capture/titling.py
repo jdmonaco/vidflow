@@ -1,7 +1,6 @@
-"""AI-powered title generation using Claude Haiku."""
+"""AI-powered title generation using the local quick slot (via aikit)."""
 
 import logging
-import os
 from dataclasses import dataclass
 
 from vidflow.capture.utils import sanitize_title
@@ -28,10 +27,12 @@ Rules:
 Example: "Ilya Sutskever - Moving from Scaling to Research"
 """
 
-_MODEL = "claude-haiku-4-5-20251001"
-_MAX_TOKENS = 60
+_MODEL = "quick"  # resident gateway slot; titling is a small local task
+# Local models reason before answering and reasoning tokens count against
+# max_tokens -- a tight budget truncates the visible title mid-word.
+_MAX_TOKENS = 500
 _TEMPERATURE = 0.3
-_TIMEOUT = 15.0
+_TIMEOUT = 15.0  # keep capture snappy; fall back rather than wait on a JIT load
 
 
 @dataclass
@@ -44,11 +45,14 @@ class TitleResult:
 
 
 def is_ai_titling_available() -> bool:
-    """Check if AI titling is available (anthropic SDK + API key)."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return False
+    """Check if AI titling is available.
+
+    The local gateway needs no API key; any failure (host asleep, slot
+    unavailable) is handled by generate_ai_title's catch-all fallback, so
+    this is a cheap import check only.
+    """
     try:
-        import anthropic  # noqa: F401
+        import aikit  # noqa: F401
         return True
     except ImportError:
         return False
@@ -78,11 +82,15 @@ def generate_ai_title(
     channel: str,
     description: str,
 ) -> TitleResult:
-    """Generate an AI-powered title for a YouTube video."""
+    """Generate an AI-powered title for a YouTube video.
+
+    Falls back to the original title on any failure -- an unreachable
+    gateway, an unavailable slot, or an invalid generation.
+    """
     try:
-        import anthropic
+        import aikit
     except ImportError:
-        logger.debug("anthropic SDK not installed, falling back to original title")
+        logger.debug("aikit not installed, falling back to original title")
         return TitleResult(ai_title=title, original_title=title, used_ai=False)
 
     user_message = (
@@ -92,16 +100,18 @@ def generate_ai_title(
     )
 
     try:
-        client = anthropic.Anthropic(timeout=_TIMEOUT)
-        response = client.messages.create(
+        client = aikit.local_client(timeout=_TIMEOUT)
+        response = client.chat.completions.create(
             model=_MODEL,
             max_tokens=_MAX_TOKENS,
             temperature=_TEMPERATURE,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
         )
 
-        raw_title = response.content[0].text
+        raw_title = response.choices[0].message.content or ""
         cleaned = _clean_title(raw_title)
 
         if not _validate_title(cleaned):

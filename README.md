@@ -1,6 +1,6 @@
 # vidflow
 
-Unified video capture and transcription CLI. Consolidates YouTube/local video frame extraction (formerly ytcapture) and Claude Vision transcription (formerly vidscribe) into a single installable package.
+Unified video capture and transcription CLI. Consolidates YouTube/local video frame extraction (formerly ytcapture) and AI vision transcription (formerly vidscribe) into a single installable package. Transcription runs on the local inference stack by default (ampere-gateway `primary` slot via `~/tools/aikit`), with claude-* models as an Anthropic-API escape hatch.
 
 ## Install
 
@@ -84,7 +84,7 @@ vidscribe capture.md       # Transcription
 vidflow youtube URL --json
 
 # Custom model
-vidflow youtube URL --transcribe -m claude-sonnet-4-6
+vidflow youtube URL --transcribe -m claude-opus-5   # Anthropic escape hatch
 
 # Background context for transcription
 vidflow transcribe capture.md -c agenda.md -c speakers.md
@@ -97,7 +97,8 @@ vidflow transcribe capture.md -t "Workshop Day 1"
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | For transcription | Claude API key |
+| `ANTHROPIC_API_KEY` | claude-* models only | Anthropic API key for the escape-hatch lane |
+| `AMPERE_GATEWAY_URL` | Optional | Gateway origin (default: `http://ampere.lan:8080`) |
 | `EXA_API_KEY` | No | Enables citation search during transcription |
 
 ## Architecture
@@ -109,7 +110,7 @@ vidflow youtube URL --transcribe
   |
   +- vidflow.youtube.transcribe_youtube()
        +- parse_vidcapture_markdown()           -> preserves existing transcript per section
-       +- VidscribeProcessor.process_all()      -> Claude Vision transcription
+       +- VidscribeProcessor.process_all()      -> AI vision transcription (local or Anthropic)
 
 vidflow local file.mp4 --transcribe
   |
@@ -119,7 +120,7 @@ vidflow local file.mp4 --transcribe
        +- VidscribeProcessor.process_all()      -> standard skeleton transcription
 ```
 
-When transcribing YouTube captures, existing auto-caption text is passed to Claude via `<existing-transcript>` tags, instructing it to enhance and correct using visual frame context rather than transcribing from scratch.
+When transcribing YouTube captures, existing auto-caption text is passed to the model via `<existing-transcript>` tags, instructing it to enhance and correct using visual frame context rather than transcribing from scratch.
 
 ## Multi-input behavior
 

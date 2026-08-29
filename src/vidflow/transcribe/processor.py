@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import aikit
 import anthropic
 import yaml
 from anthropic import Anthropic
@@ -50,7 +51,7 @@ class VidscribeProcessor:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str],
         model: str,
         temperature: float = 0.2,
         batch_size: int = 10,
@@ -59,14 +60,19 @@ class VidscribeProcessor:
         background_context: str = "",
         json_output: bool = False,
         exa_api_key: Optional[str] = None,
+        provider: Optional[str] = None,
     ):
-        """Initialize the processor with API credentials and settings."""
+        """Initialize the processor.
+
+        The provider is inferred from the model name (claude-* routes to
+        Anthropic, anything else to the local gateway) unless overridden.
+        api_key is only required on the Anthropic lane.
+        """
         from vidflow.models_config import DEFAULT_TEMPERATURE, model_accepts_temperature
 
-        self.client = Anthropic(api_key=api_key)
+        self.provider = aikit.provider_for(model, provider)
         self.model = model
         self.temperature = temperature
-        self.supports_temperature = model_accepts_temperature(model)
         self.batch_size = batch_size
         self.context_frames = context_frames
         self.max_dimension = max_dimension
@@ -74,6 +80,16 @@ class VidscribeProcessor:
         self.json_output = json_output
         self.console = Console(quiet=json_output)
         self.magick_cmd = find_magick_command()
+
+        # Frontmatter always runs locally on the quick slot
+        self.local_client = aikit.local_client()
+        if self.provider == "anthropic":
+            self.client = Anthropic(api_key=api_key)
+            self.supports_temperature = model_accepts_temperature(model)
+        else:
+            self.client = None
+            self.supports_temperature = True  # local slots accept temperature
+            aikit.warm(model)  # overlap any JIT load with image prep
 
         if not self.supports_temperature and temperature != DEFAULT_TEMPERATURE:
             self.console.print(
@@ -193,6 +209,94 @@ class VidscribeProcessor:
                 raise RuntimeError(f"API request failed: {str(e)}")
 
         raise RuntimeError("All retry attempts failed")
+
+    def _run_local_batch(self, messages: list, progress_task, progress) -> str:
+        """Local-gateway lane: stream a batch with tool-use loop.
+
+        aikit.stream_text retries transient gateway errors (409/503) with
+        Retry-After budgets and resumes truncation via user-turn
+        continuations internally. Streaming tool-call deltas are verified
+        working through the shim (qwen3_coder parser on primary).
+        """
+        tools = None
+        if self.exa_enabled:
+            tools = [aikit.tool_def(
+                EXA_SEARCH_TOOL["name"],
+                EXA_SEARCH_TOOL["description"],
+                EXA_SEARCH_TOOL["input_schema"],
+            )]
+
+        def on_delta(text: str, _seen=[0]) -> None:
+            _seen[0] += len(text)
+            progress.update(progress_task, completed=min(95, _seen[0] / 20))
+
+        response_text = ""
+        tool_call_count = 0
+        while True:
+            try:
+                result = aikit.stream_text(
+                    self.local_client,
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=16000,
+                    temperature=self.temperature,
+                    tools=tools,
+                    on_delta=on_delta,
+                    max_continuations=3,
+                )
+            except (aikit.GatewayTransient, aikit.GatewayPermanent) as e:
+                raise RuntimeError(f"API request failed: {e}")
+
+            response_text += result.text
+
+            if (
+                result.finish_reason == "tool_calls"
+                and self.exa_enabled
+                and result.tool_calls
+                and tool_call_count < MAX_TOOL_CALLS_PER_BATCH
+            ):
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": result.text or None,
+                    "tool_calls": result.tool_calls,
+                }
+                messages.append(assistant_msg)
+                for tc in result.tool_calls:
+                    tool_call_count += 1
+                    try:
+                        args = json.loads(tc["function"]["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    query = args.get("query", "")
+                    self.console.print(
+                        f"[dim]  Searching: {query[:80]}...[/dim]"
+                        if len(query) > 80
+                        else f"[dim]  Searching: {query}[/dim]"
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": self._execute_exa_search(query),
+                    })
+                progress.update(
+                    progress_task,
+                    description=f"Processing citations ({tool_call_count} searches)",
+                    completed=0,
+                )
+                continue
+
+            if tool_call_count >= MAX_TOOL_CALLS_PER_BATCH:
+                self.console.print(
+                    f"[yellow]Warning: Hit tool call limit "
+                    f"({MAX_TOOL_CALLS_PER_BATCH}) for this batch[/yellow]"
+                )
+            if result.finish_reason == "length":
+                self.console.print(
+                    "[yellow]Warning: Response still truncated after "
+                    "continuation attempts[/yellow]"
+                )
+            progress.update(progress_task, completed=100)
+            return response_text
 
     def _execute_exa_search(self, query: str) -> str:
         """Execute an Exa academic paper search and return formatted result."""
@@ -315,29 +419,36 @@ class VidscribeProcessor:
                 {"type": "text", "text": f"\n[Frame: {section.timestamp}]\n"}
             )
 
-            # Add image
-            image_block = {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": self.get_media_type(prepared_path),
-                    "data": base64_image,
-                },
-            }
+            # Add image (provider-specific block shape)
+            if self.provider == "anthropic":
+                image_block = {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": self.get_media_type(prepared_path),
+                        "data": base64_image,
+                    },
+                }
+            else:
+                image_block = aikit.image_part(
+                    base64_image, self.get_media_type(prepared_path)
+                )
             content.append(image_block)
 
         # Close the frame-images tag
         content.append({"type": "text", "text": "\n</frame-images>\n\n"})
 
-        # Add background context if available (with cache control for prompt caching)
+        # Add background context if available. Anthropic gets an explicit
+        # cache_control breakpoint; the local SGLang backend radix-caches
+        # prefixes server-side on its own, so no field is needed there.
         if self.background_context:
-            content.append(
-                {
-                    "type": "text",
-                    "text": f"<background-context>\n{self.background_context}\n</background-context>\n\n",
-                    "cache_control": {"type": "ephemeral", "ttl": "5m"},
-                }
-            )
+            context_block = {
+                "type": "text",
+                "text": f"<background-context>\n{self.background_context}\n</background-context>\n\n",
+            }
+            if self.provider == "anthropic":
+                context_block["cache_control"] = {"type": "ephemeral", "ttl": "5m"}
+            content.append(context_block)
 
         # Add previous transcription context if available
         if previous_sections:
@@ -361,6 +472,12 @@ class VidscribeProcessor:
         )
 
         messages = [{"role": "user", "content": content}]
+
+        # Local lane: aikit handles streaming, retry, tool loop, continuation
+        if self.provider == "local":
+            response_text = self._run_local_batch(messages, api_task, progress)
+            progress.remove_task(api_task)
+            return self._parse_batch_response(response_text, sections)
 
         # Pass tools if Exa citation search is enabled
         tools = [EXA_SEARCH_TOOL] if self.exa_enabled else None
@@ -559,14 +676,18 @@ class VidscribeProcessor:
         prompt_text += f"\n<transcript>\n{truncated}\n</transcript>"
 
         try:
-            response = self.client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=500,
+            # Frontmatter always runs locally on the quick slot (small task);
+            # the static fallback below covers an unavailable slot.
+            # Reasoning tokens count against max_tokens on the local models,
+            # so leave generous headroom above the ~15-line YAML output.
+            response = self.local_client.chat.completions.create(
+                model="quick",
+                max_tokens=1500,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt_text}],
             )
 
-            yaml_text = response.content[0].text.strip()
+            yaml_text = (response.choices[0].message.content or "").strip()
 
             # Remove markdown code fence if present
             if yaml_text.startswith("```"):
