@@ -45,13 +45,16 @@ console = Console()
 
 def get_clipboard_urls() -> list[str]:
     """Check clipboard for YouTube URLs (macOS only)."""
-    if platform.system() != 'Darwin':
+    if platform.system() != "Darwin":
         return []
-    if shutil.which('pbpaste') is None:
+    if shutil.which("pbpaste") is None:
         return []
     try:
         result = subprocess.run(
-            ['pbpaste'], capture_output=True, text=True, timeout=5,
+            ["pbpaste"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         clipboard = result.stdout.strip()
         if not clipboard:
@@ -77,7 +80,9 @@ def preview_urls(video_urls: list[str], con: Console, source: str = "clipboard")
             try:
                 metadata = get_video_metadata(url)
                 table.add_row(
-                    str(i), metadata.title, metadata.channel,
+                    str(i),
+                    metadata.title,
+                    metadata.channel,
                     format_timestamp(metadata.duration),
                 )
             except VideoError:
@@ -109,44 +114,56 @@ Examples:
     )
     parser.add_argument("urls", nargs="*", help="YouTube video URL(s) or video ID(s)")
     parser.add_argument(
-        "-o", "--output", type=str,
+        "-o",
+        "--output",
+        type=str,
         help="Output directory (relative to cwd or absolute path)",
     )
     parser.add_argument(
-        "--interval", type=int, default=_cfg.get("interval", 15),
+        "--interval",
+        type=int,
+        default=_cfg.get("interval", 15),
         help=f"Frame extraction interval in seconds (default: {_cfg.get('interval', 15)})",
     )
     parser.add_argument(
-        "--max-frames", type=int, default=_cfg.get("max_frames"),
+        "--max-frames",
+        type=int,
+        default=_cfg.get("max_frames"),
         help="Maximum number of frames to extract",
     )
     parser.add_argument(
-        "--frame-format", choices=["jpg", "png"],
+        "--frame-format",
+        choices=["jpg", "png"],
         default=_cfg.get("frame_format", "jpg"),
         help=f"Frame image format (default: {_cfg.get('frame_format', 'jpg')})",
     )
     parser.add_argument(
-        "--language", default=_cfg.get("language", "en"),
+        "--language",
+        default=_cfg.get("language", "en"),
         help=f"Transcript language code (default: {_cfg.get('language', 'en')})",
     )
     parser.add_argument(
-        "--prefer-manual", action="store_true",
+        "--prefer-manual",
+        action="store_true",
         default=_cfg.get("prefer_manual", False),
         help="Only use manual transcripts",
     )
     parser.add_argument(
-        "--dedup-threshold", type=float,
+        "--dedup-threshold",
+        type=float,
         default=_cfg.get("dedup_threshold", 0.85),
         help=f"Similarity threshold for frame deduplication (default: {_cfg.get('dedup_threshold', 0.85)})",
     )
     parser.add_argument("--no-dedup", action="store_true", help="Disable frame deduplication")
     parser.add_argument(
-        "--keep-video", action="store_true",
+        "--keep-video",
+        action="store_true",
         default=_cfg.get("keep_video", False),
         help="Keep downloaded video file after frame extraction",
     )
     parser.add_argument(
-        "--no-ai-title", action="store_true",
+        "--no-ai-title",
+        action="store_true",
         default=not _cfg.get("ai_title", True),
         help="Disable AI title generation",
     )
@@ -242,9 +259,16 @@ Examples:
         console.print(f"[bold blue][{i}/{len(video_urls)}][/] {video_url}")
         try:
             md_file = process_video(
-                video_url, output_dir, args.interval, args.max_frames,
-                args.frame_format, args.language, args.prefer_manual,
-                args.dedup_threshold, args.no_dedup, args.keep_video,
+                video_url,
+                output_dir,
+                args.interval,
+                args.max_frames,
+                args.frame_format,
+                args.language,
+                args.prefer_manual,
+                args.dedup_threshold,
+                args.no_dedup,
+                args.keep_video,
                 args.no_ai_title,
             )
             console.print(f"[green]+[/] {md_file.name}")
@@ -255,7 +279,9 @@ Examples:
 
     # 8. Summary
     if error_count > 0:
-        console.print(f"\n[bold yellow]Complete![/] {success_count} succeeded, {error_count} failed")
+        console.print(
+            f"\n[bold yellow]Complete![/] {success_count} succeeded, {error_count} failed"
+        )
     else:
         console.print(f"\n[bold green]Complete![/] {success_count} video(s) processed")
 
@@ -278,53 +304,72 @@ Examples:
     )
     parser.add_argument("files", nargs="*", help="Local video file(s)")
     parser.add_argument(
-        "-o", "--output", type=str,
+        "-o",
+        "--output",
+        type=str,
         help="Output directory (relative to cwd or absolute path)",
     )
     parser.add_argument(
-        "--interval", type=int, default=_cfg.get("interval", 15),
+        "--interval",
+        type=int,
+        default=_cfg.get("interval", 15),
         help=f"Frame extraction interval in seconds (default: {_cfg.get('interval', 15)})",
     )
     parser.add_argument(
-        "--max-frames", type=int, default=_cfg.get("max_frames"),
+        "--max-frames",
+        type=int,
+        default=_cfg.get("max_frames"),
         help="Maximum number of frames to extract",
     )
     parser.add_argument(
-        "--frame-format", choices=["jpg", "png"],
+        "--frame-format",
+        choices=["jpg", "png"],
         default=_cfg.get("frame_format", "jpg"),
         help=f"Frame image format (default: {_cfg.get('frame_format', 'jpg')})",
     )
     parser.add_argument(
-        "--dedup-threshold", type=float,
+        "--dedup-threshold",
+        type=float,
         default=_cfg.get("dedup_threshold", 0.85),
         help=f"Similarity threshold for frame deduplication (default: {_cfg.get('dedup_threshold', 0.85)})",
     )
     parser.add_argument("--no-dedup", action="store_true", help="Disable frame deduplication")
     parser.add_argument(
-        "--fast", action="store_true",
+        "--fast",
+        action="store_true",
         default=_cfg.get("fast", True),
         help="Use fast keyframe seeking (default)",
     )
     parser.add_argument("--no-fast", action="store_true", help="Disable fast keyframe seeking")
     parser.add_argument(
-        "--no-subtitles", action="store_true",
+        "--no-subtitles",
+        action="store_true",
         help="Ignore embedded subtitle tracks (skip extraction)",
     )
     parser.add_argument(
-        "--subtitle-track", type=int, metavar="N",
+        "--subtitle-track",
+        type=int,
+        metavar="N",
         help="Use subtitle track index N (0-based among subtitle streams)",
     )
     parser.add_argument(
-        "--list-subtitles", action="store_true",
+        "--list-subtitles",
+        action="store_true",
         help="List embedded subtitle tracks and exit (no capture)",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument(
-        "--json", dest="json_output", action="store_true",
+        "--json",
+        dest="json_output",
+        action="store_true",
         help="Output JSON instead of rich console output",
     )
-    parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing output files")
-    parser.add_argument("--version", action="version", version=f"vidcapture (vidflow {__version__})")
+    parser.add_argument(
+        "-f", "--force", action="store_true", help="Overwrite existing output files"
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"vidcapture (vidflow {__version__})"
+    )
 
     args = parser.parse_args(argv)
 
@@ -410,9 +455,16 @@ Examples:
         out_console.print(f"[bold blue][{i}/{len(args.files)}][/] {video_path.name}")
         try:
             result = process_local_video(
-                video_path, output_dir, args.interval, args.max_frames,
-                args.frame_format, args.dedup_threshold, args.no_dedup,
-                fast, args.json_output, args.force,
+                video_path,
+                output_dir,
+                args.interval,
+                args.max_frames,
+                args.frame_format,
+                args.dedup_threshold,
+                args.no_dedup,
+                fast,
+                args.json_output,
+                args.force,
                 use_subtitles=not args.no_subtitles,
                 subtitle_track=args.subtitle_track,
             )
@@ -423,11 +475,13 @@ Examples:
             success_count += 1
         except (LocalVideoError, FrameExtractionError) as e:
             if args.json_output:
-                results.append({
-                    "status": "error",
-                    "video": str(video_path.resolve()),
-                    "error": str(e),
-                })
+                results.append(
+                    {
+                        "status": "error",
+                        "video": str(video_path.resolve()),
+                        "error": str(e),
+                    }
+                )
             else:
                 out_console.print(f"[red]x[/] Failed: {e}")
             error_count += 1
@@ -437,12 +491,17 @@ Examples:
         if len(args.files) == 1:
             print(json.dumps(results[0], indent=2))
         else:
-            print(json.dumps({
-                "status": "success" if error_count == 0 else "partial",
-                "succeeded": success_count,
-                "failed": error_count,
-                "results": results,
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "success" if error_count == 0 else "partial",
+                        "succeeded": success_count,
+                        "failed": error_count,
+                        "results": results,
+                    },
+                    indent=2,
+                )
+            )
         return 0
 
     # Summary
@@ -459,6 +518,7 @@ Examples:
 def _handle_completion(command: str, args: list[str]) -> int:
     """Handle completion subcommand for backward compatibility."""
     from vidflow.capture.completion import completion_command
+
     return completion_command(command, args)
 
 

@@ -31,11 +31,11 @@ console = Console()
 
 def format_markdown(filepath: Path) -> bool:
     """Format markdown file with mdformat if available."""
-    if shutil.which('mdformat') is None:
+    if shutil.which("mdformat") is None:
         return False
     try:
         subprocess.run(
-            ['mdformat', '--wrap', 'no', filepath],
+            ["mdformat", "--wrap", "no", filepath],
             capture_output=True,
             timeout=30,
         )
@@ -59,13 +59,13 @@ def shorten_path(path: str) -> str:
     home = str(Path.home())
     onedrive_prefix = f"{home}/Library/CloudStorage/OneDrive-"
     if path.startswith(onedrive_prefix):
-        rest = path[len(onedrive_prefix):]
+        rest = path[len(onedrive_prefix) :]
         if "/" in rest:
             _, subpath = rest.split("/", 1)
             return f"~/OneDrive/{subpath}"
         return f"~/OneDrive/{rest}"
     if path.startswith(home + "/"):
-        return "~" + path[len(home):]
+        return "~" + path[len(home) :]
     elif path == home:
         return "~"
     return path
@@ -119,11 +119,11 @@ def process_video(
 
     # 2. Create directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = output_dir / 'images' / metadata.video_id
+    frames_dir = output_dir / "images" / metadata.video_id
     frames_dir.mkdir(parents=True, exist_ok=True)
-    transcripts_dir = output_dir / 'transcripts'
+    transcripts_dir = output_dir / "transcripts"
     transcripts_dir.mkdir(exist_ok=True)
-    videos_dir = output_dir / 'videos'
+    videos_dir = output_dir / "videos"
     videos_dir.mkdir(exist_ok=True)
 
     # 3. Get transcript
@@ -138,7 +138,7 @@ def process_video(
         console.print(f"[green]+[/] Found {len(transcript)} transcript segments")
         save_transcript_json(
             transcript,
-            transcripts_dir / f'raw-transcript-{metadata.video_id}.json',
+            transcripts_dir / f"raw-transcript-{metadata.video_id}.json",
         )
     else:
         console.print("[yellow]![/] No transcript available, proceeding with frames only")
@@ -168,9 +168,9 @@ def process_video(
     final_video_path: Path | None = None
     if keep_video:
         md_filename = generate_markdown_filename(metadata)
-        md_basename = md_filename.rsplit('.', 1)[0]
+        md_basename = md_filename.rsplit(".", 1)[0]
         video_ext = video_path.suffix
-        final_video_path = videos_dir / f'{md_basename}{video_ext}'
+        final_video_path = videos_dir / f"{md_basename}{video_ext}"
 
         if video_path != final_video_path:
             video_path.rename(final_video_path)
@@ -250,24 +250,22 @@ def process_local_video(
 
         if streams:
             if len(streams) > 1 and subtitle_track is None:
-                out_console.print(
-                    f"  [dim]Found {len(streams)} subtitle tracks:[/]"
-                )
+                out_console.print(f"  [dim]Found {len(streams)} subtitle tracks:[/]")
                 for s in streams:
                     out_console.print(f"    [dim]- {s.describe()}[/]")
 
             try:
                 chosen = select_subtitle_stream(
-                    streams, track=subtitle_track, language="en",
+                    streams,
+                    track=subtitle_track,
+                    language="en",
                 )
             except SubtitleError as e:
                 out_console.print(f"  [yellow]![/] {e}")
                 chosen = None
 
             if chosen is None:
-                out_console.print(
-                    "  [yellow]![/] No text-based subtitle track selectable"
-                )
+                out_console.print("  [yellow]![/] No text-based subtitle track selectable")
             elif not chosen.is_text_based:
                 out_console.print(
                     f"  [yellow]![/] Selected track codec '{chosen.codec}' is not "
@@ -287,8 +285,7 @@ def process_local_video(
                         metadata.subtitle_source = chosen.describe()
                     else:
                         out_console.print(
-                            f"  [yellow]![/] Subtitle track {chosen.describe()} "
-                            "yielded no cues"
+                            f"  [yellow]![/] Subtitle track {chosen.describe()} " "yielded no cues"
                         )
                 except SubtitleError as e:
                     out_console.print(f"  [yellow]![/] Subtitle extraction failed: {e}")
@@ -309,13 +306,13 @@ def process_local_video(
 
     # 2. Create directory structure (with collision handling)
     output_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = output_dir / 'images' / metadata.identifier
+    frames_dir = output_dir / "images" / metadata.identifier
     if frames_dir.exists():
         suffix = 2
-        while (output_dir / 'images' / f"{metadata.file_path.stem}-{suffix}").exists():
+        while (output_dir / "images" / f"{metadata.file_path.stem}-{suffix}").exists():
             suffix += 1
         metadata._identifier_suffix = suffix
-        frames_dir = output_dir / 'images' / metadata.identifier
+        frames_dir = output_dir / "images" / metadata.identifier
         out_console.print(f"  [dim]Using identifier:[/] {metadata.identifier} (collision avoided)")
     frames_dir.mkdir(parents=True, exist_ok=True)
 

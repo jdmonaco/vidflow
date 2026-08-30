@@ -6,7 +6,6 @@ from typing import Any
 
 import yaml
 
-
 # Default configuration values
 DEFAULT_CONFIG: dict[str, Any] = {
     "interval": 15,
@@ -108,9 +107,7 @@ def load_config(path: Path | None = None) -> tuple[dict[str, Any], bool]:
     return config, was_created
 
 
-def merge_config(
-    file_config: dict[str, Any], cli_overrides: dict[str, Any]
-) -> dict[str, Any]:
+def merge_config(file_config: dict[str, Any], cli_overrides: dict[str, Any]) -> dict[str, Any]:
     """Merge CLI overrides into file configuration."""
     return _merge_dicts(file_config, cli_overrides)
 

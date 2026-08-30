@@ -12,6 +12,7 @@ from vidflow.capture.subtitles import (
 
 # --- sanitize_cue_text ---
 
+
 class TestSanitizeCueText:
     def test_strips_font_tags(self):
         assert sanitize_cue_text('<font color="red">hello</font>') == "hello"
@@ -55,6 +56,7 @@ class TestSanitizeCueText:
 
 # --- parse_webvtt ---
 
+
 class TestParseWebVTT:
     def test_parses_basic_cues(self):
         vtt = (
@@ -82,21 +84,12 @@ class TestParseWebVTT:
         assert segments[0].duration == pytest.approx(2.5)
 
     def test_strips_markup_in_cues(self):
-        vtt = (
-            "WEBVTT\n\n"
-            "00:00:01.000 --> 00:00:02.000\n"
-            '<font color="red">red text</font>\n'
-        )
+        vtt = "WEBVTT\n\n" "00:00:01.000 --> 00:00:02.000\n" '<font color="red">red text</font>\n'
         segments = parse_webvtt(vtt)
         assert segments[0].text == "red text"
 
     def test_multi_line_cue_joined(self):
-        vtt = (
-            "WEBVTT\n\n"
-            "00:00:01.000 --> 00:00:03.000\n"
-            "First part\n"
-            "continues here\n"
-        )
+        vtt = "WEBVTT\n\n" "00:00:01.000 --> 00:00:03.000\n" "First part\n" "continues here\n"
         segments = parse_webvtt(vtt)
         assert len(segments) == 1
         assert segments[0].text == "First part continues here"
@@ -115,28 +108,20 @@ class TestParseWebVTT:
         assert segments[0].text == "kept"
 
     def test_crlf_line_endings(self):
-        vtt = (
-            "WEBVTT\r\n\r\n"
-            "00:00:01.000 --> 00:00:02.000\r\n"
-            "crlf\r\n"
-        )
+        vtt = "WEBVTT\r\n\r\n" "00:00:01.000 --> 00:00:02.000\r\n" "crlf\r\n"
         segments = parse_webvtt(vtt)
         assert len(segments) == 1
         assert segments[0].text == "crlf"
 
     def test_cue_identifier_line_ignored(self):
-        vtt = (
-            "WEBVTT\n\n"
-            "cue-1\n"
-            "00:00:01.000 --> 00:00:02.000\n"
-            "text\n"
-        )
+        vtt = "WEBVTT\n\n" "cue-1\n" "00:00:01.000 --> 00:00:02.000\n" "text\n"
         segments = parse_webvtt(vtt)
         assert len(segments) == 1
         assert segments[0].text == "text"
 
 
 # --- select_subtitle_stream ---
+
 
 def _stream(
     sub_idx: int,

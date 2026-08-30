@@ -9,7 +9,12 @@ from vidflow.capture.frames import FrameInfo
 from vidflow.capture.local import LocalVideoMetadata
 from vidflow.capture.metadata import VideoMetadataProtocol
 from vidflow.capture.transcript import TranscriptSegment
-from vidflow.capture.utils import format_date, format_timestamp, sanitize_title, truncate_title_words
+from vidflow.capture.utils import (
+    format_date,
+    format_timestamp,
+    sanitize_title,
+    truncate_title_words,
+)
 
 
 def align_transcript_to_frames(
@@ -30,12 +35,9 @@ def align_transcript_to_frames(
         if i + 1 < len(frames):
             frame_end = frames[i + 1].timestamp
         else:
-            frame_end = float('inf')
+            frame_end = float("inf")
 
-        segments = [
-            s for s in transcript
-            if frame_start <= s.start < frame_end
-        ]
+        segments = [s for s in transcript if frame_start <= s.start < frame_end]
 
         grouped.append((frame, segments))
 
@@ -48,26 +50,30 @@ def generate_frontmatter(
 ) -> str:
     """Generate YAML frontmatter for Obsidian."""
     frontmatter: dict[str, str | list[str]] = {
-        'title': metadata.title,
-        'created': datetime.now().strftime('%Y-%m-%d'),
-        'published': format_date(metadata.source_date),
-        'tags': [metadata.source_type],
+        "title": metadata.title,
+        "created": datetime.now().strftime("%Y-%m-%d"),
+        "published": format_date(metadata.source_date),
+        "tags": [metadata.source_type],
     }
 
     if url:
-        frontmatter['source'] = url
+        frontmatter["source"] = url
 
     if metadata.author:
-        frontmatter['author'] = [metadata.author]
+        frontmatter["author"] = [metadata.author]
 
-    if hasattr(metadata, '_original_title') and metadata._original_title and metadata._original_title != metadata.title:
-        frontmatter['original_title'] = metadata._original_title
+    if (
+        hasattr(metadata, "_original_title")
+        and metadata._original_title
+        and metadata._original_title != metadata.title
+    ):
+        frontmatter["original_title"] = metadata._original_title
 
     if metadata.description:
         description = metadata.description
         if len(description) > 200:
-            description = description[:197] + '...'
-        frontmatter['description'] = description
+            description = description[:197] + "..."
+        frontmatter["description"] = description
 
     frontmatter = {k: v for k, v in frontmatter.items() if v}
 
@@ -78,7 +84,7 @@ def generate_frontmatter(
         default_flow_style=False,
     )
 
-    return f'---\n{yaml_str}---\n'
+    return f"---\n{yaml_str}---\n"
 
 
 def generate_markdown_body(
@@ -90,18 +96,18 @@ def generate_markdown_body(
 
     for frame, segments in grouped_data:
         timestamp_str = format_timestamp(frame.timestamp)
-        section = f'\n## {timestamp_str}\n\n'
+        section = f"\n## {timestamp_str}\n\n"
 
-        relative_path = f'images/{identifier}/{frame.path.name}'
-        section += f'![[{relative_path}]]\n\n'
+        relative_path = f"images/{identifier}/{frame.path.name}"
+        section += f"![[{relative_path}]]\n\n"
 
         if segments:
-            text = ' '.join(s.text for s in segments)
-            section += f'{text}\n'
+            text = " ".join(s.text for s in segments)
+            section += f"{text}\n"
 
         sections.append(section)
 
-    return ''.join(sections)
+    return "".join(sections)
 
 
 def generate_frames_only(
@@ -113,12 +119,12 @@ def generate_frames_only(
 
     for frame in frames:
         timestamp_str = format_timestamp(frame.timestamp)
-        relative_path = f'images/{identifier}/{frame.path.name}'
+        relative_path = f"images/{identifier}/{frame.path.name}"
 
-        section = f'\n## {timestamp_str}\n\n![[{relative_path}]]\n'
+        section = f"\n## {timestamp_str}\n\n![[{relative_path}]]\n"
         sections.append(section)
 
-    return ''.join(sections)
+    return "".join(sections)
 
 
 def generate_markdown_filename(metadata: VideoMetadataProtocol) -> str:
@@ -128,17 +134,17 @@ def generate_markdown_filename(metadata: VideoMetadataProtocol) -> str:
 
     if metadata.author:
         author = sanitize_title(metadata.author)
-        return f'{short_title} ({author}) {date_str}.md'
+        return f"{short_title} ({author}) {date_str}.md"
     else:
-        return f'{short_title} {date_str}.md'
+        return f"{short_title} {date_str}.md"
 
 
 def generate_local_markdown_filename(metadata: LocalVideoMetadata) -> str:
     """Generate markdown filename for local video files."""
     stem = metadata.file_path.stem
     if metadata._identifier_suffix > 0:
-        return f'{stem}-{metadata._identifier_suffix}.md'
-    return f'{stem}.md'
+        return f"{stem}-{metadata._identifier_suffix}.md"
+    return f"{stem}.md"
 
 
 def generate_markdown_file(
@@ -161,28 +167,28 @@ def generate_markdown_file(
     elif frames:
         body = generate_frames_only(frames, identifier)
     else:
-        body = '\n*No frames or transcript available.*\n'
+        body = "\n*No frames or transcript available.*\n"
 
-    video_embed = ''
+    video_embed = ""
     if video_path and video_path.exists():
-        relative_video_path = f'videos/{video_path.name}'
+        relative_video_path = f"videos/{video_path.name}"
         video_embed = f'\n<video src="{relative_video_path}" controls width="100%"></video>\n'
 
-    description_section = ''
+    description_section = ""
     if metadata.description:
-        first_para = metadata.description.strip().split('\n\n')[0]
-        desc_lines = first_para.strip().split('\n')
-        desc_blockquote = '\n'.join(f'> {line}' for line in desc_lines if line.strip())
+        first_para = metadata.description.strip().split("\n\n")[0]
+        desc_lines = first_para.strip().split("\n")
+        desc_blockquote = "\n".join(f"> {line}" for line in desc_lines if line.strip())
         if desc_blockquote:
-            description_section = f'\n{desc_blockquote}\n'
+            description_section = f"\n{desc_blockquote}\n"
 
-    title_heading = f'\n# {metadata.title}\n'
+    title_heading = f"\n# {metadata.title}\n"
     content = frontmatter + title_heading + video_embed + description_section + body
 
     if filename is None:
         filename = generate_markdown_filename(metadata)
 
     filepath = output_dir / filename
-    filepath.write_text(content, encoding='utf-8')
+    filepath.write_text(content, encoding="utf-8")
 
     return filepath

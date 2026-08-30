@@ -18,12 +18,13 @@ class TranscriptSegment:
 
 class TranscriptError(Exception):
     """Exception raised for transcript-related errors."""
+
     pass
 
 
 def get_transcript(
     video_id: str,
-    language: str = 'en',
+    language: str = "en",
     prefer_manual: bool = True,
 ) -> list[TranscriptSegment] | None:
     """Fetch transcript for a YouTube video."""
@@ -87,4 +88,4 @@ def save_transcript_json(
 ) -> None:
     """Save transcript to a JSON file."""
     data = [asdict(segment) for segment in transcript]
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

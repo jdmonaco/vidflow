@@ -28,6 +28,7 @@ class TestYtcaptureEntry:
     def test_help(self):
         with pytest.raises(SystemExit) as exc_info:
             from vidflow.capture.cli import ytcapture_main
+
             ytcapture_main(["--help"])
         assert exc_info.value.code == 0
 
@@ -48,6 +49,7 @@ class TestVidcaptureEntry:
     def test_help(self):
         with pytest.raises(SystemExit) as exc_info:
             from vidflow.capture.cli import vidcapture_main
+
             vidcapture_main(["--help"])
         assert exc_info.value.code == 0
 
@@ -83,7 +85,13 @@ class TestImports:
     """Tests for package-level imports."""
 
     def test_capture_imports(self):
-        from vidflow.capture import capture_youtube, capture_local, process_video, process_local_video
+        from vidflow.capture import (
+            capture_youtube,
+            capture_local,
+            process_video,
+            process_local_video,
+        )
+
         assert callable(capture_youtube)
         assert callable(capture_local)
         assert callable(process_video)
@@ -96,8 +104,10 @@ class TestImports:
             merge_vidcapture_documents,
             transcribe_markdown,
         )
+
         assert callable(transcribe_markdown)
 
     def test_youtube_import(self):
         from vidflow.youtube import transcribe_youtube
+
         assert callable(transcribe_youtube)

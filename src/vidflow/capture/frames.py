@@ -22,22 +22,21 @@ class FrameInfo:
 
 class FrameExtractionError(Exception):
     """Exception raised for frame extraction errors."""
+
     pass
 
 
 def check_ffmpeg() -> bool:
     """Check if ffmpeg is available in PATH."""
-    return shutil.which('ffmpeg') is not None
+    return shutil.which("ffmpeg") is not None
 
 
 @functools.lru_cache(maxsize=1)
 def ffmpeg_version() -> tuple[int, int]:
     """Return the installed ffmpeg (major, minor) version, (0, 0) if unknown."""
     try:
-        result = subprocess.run(
-            ['ffmpeg', '-version'], capture_output=True, text=True, timeout=10
-        )
-        match = re.search(r'ffmpeg version n?(\d+)\.(\d+)', result.stdout)
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=10)
+        match = re.search(r"ffmpeg version n?(\d+)\.(\d+)", result.stdout)
         if match:
             return int(match.group(1)), int(match.group(2))
     except Exception:
@@ -53,8 +52,8 @@ def vfr_output_args() -> list[str]:
     An unparseable version defaults to the modern flag.
     """
     if ffmpeg_version() >= (5, 1) or ffmpeg_version() == (0, 0):
-        return ['-fps_mode', 'vfr']
-    return ['-vsync', 'vfr']
+        return ["-fps_mode", "vfr"]
+    return ["-vsync", "vfr"]
 
 
 def compute_phash(image_path: Path) -> imagehash.ImageHash:
@@ -75,7 +74,7 @@ def extract_frames_fast(
     duration: float,
     interval: int = 15,
     max_frames: int | None = None,
-    frame_format: str = 'jpg',
+    frame_format: str = "jpg",
     dedup_threshold: float | None = 0.85,
 ) -> list[FrameInfo]:
     """Extract frames using fast keyframe seeking."""
@@ -105,13 +104,18 @@ def extract_frames_fast(
     frame_index = 0
 
     for timestamp in timestamps:
-        temp_path = output_dir / f'_temp_frame.{frame_format}'
+        temp_path = output_dir / f"_temp_frame.{frame_format}"
         cmd = [
-            'ffmpeg', '-y',
-            '-ss', str(timestamp),
-            '-i', str(video_path),
-            '-frames:v', '1',
-            '-q:v', '2',
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(timestamp),
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
             str(temp_path),
         ]
 
@@ -138,14 +142,14 @@ def extract_frames_fast(
 
             prev_hash = current_hash
 
-        final_name = f'frame-{frame_index:04d}.{frame_format}'
+        final_name = f"frame-{frame_index:04d}.{frame_format}"
         final_path = output_dir / final_name
         shutil.move(str(temp_path), str(final_path))
 
         frames.append(FrameInfo(path=final_path, timestamp=timestamp))
         frame_index += 1
 
-    temp_path = output_dir / f'_temp_frame.{frame_format}'
+    temp_path = output_dir / f"_temp_frame.{frame_format}"
     temp_path.unlink(missing_ok=True)
 
     return frames
@@ -156,7 +160,7 @@ def extract_frames_from_file(
     output_dir: Path,
     interval: int = 15,
     max_frames: int | None = None,
-    frame_format: str = 'jpg',
+    frame_format: str = "jpg",
     dedup_threshold: float | None = 0.85,
 ) -> list[FrameInfo]:
     """Extract frames from a local video file with integrated deduplication."""
@@ -175,23 +179,26 @@ def extract_frames_from_file(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        temp_pattern = temp_path / f'frame-%04d.{frame_format}'
+        temp_pattern = temp_path / f"frame-%04d.{frame_format}"
 
-        cmd = ['ffmpeg', '-y', '-i', str(video_path)]
+        cmd = ["ffmpeg", "-y", "-i", str(video_path)]
 
-        vf_parts = [f'fps=1/{interval}']
+        vf_parts = [f"fps=1/{interval}"]
 
         if max_frames and dedup_threshold is None:
             vf_parts.append(f"select='lt(n,{max_frames})'")
 
         if vf_parts:
-            cmd.extend(['-vf', ','.join(vf_parts)])
+            cmd.extend(["-vf", ",".join(vf_parts)])
 
-        cmd.extend([
-            *vfr_output_args(),
-            '-frame_pts', '1',
-            str(temp_pattern),
-        ])
+        cmd.extend(
+            [
+                *vfr_output_args(),
+                "-frame_pts",
+                "1",
+                str(temp_pattern),
+            ]
+        )
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -210,7 +217,7 @@ def extract_frames_from_file(
         except Exception as e:
             raise FrameExtractionError(f"Frame extraction failed: {e}") from e
 
-        temp_frames = sorted(temp_path.glob(f'frame-*.{frame_format}'))
+        temp_frames = sorted(temp_path.glob(f"frame-*.{frame_format}"))
 
         if not temp_frames:
             raise FrameExtractionError("No frames were extracted from video")
@@ -238,7 +245,7 @@ def extract_frames_from_file(
 
                 prev_hash = current_hash
 
-            final_name = f'frame-{frame_index:04d}.{frame_format}'
+            final_name = f"frame-{frame_index:04d}.{frame_format}"
             final_path = output_dir / final_name
             shutil.move(str(temp_frame), str(final_path))
 

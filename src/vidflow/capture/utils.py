@@ -7,17 +7,16 @@ from dateutil import parser as date_parser
 
 # Regex to find YouTube URLs in arbitrary text
 _YOUTUBE_URL_RE = re.compile(
-    r'https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)'
-    r'[^\s\)\]"\'>,]*'
+    r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)" r'[^\s\)\]"\'>,]*'
 )
 
 
 def sanitize_title(title: str, max_length: int = 100) -> str:
     """Sanitize a title for use as a filename."""
-    sanitized = re.sub(r'[<>:"/\\|?*]', ' ', title)
-    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    sanitized = re.sub(r'[<>:"/\\|?*]', " ", title)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
     if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length].rsplit(' ', 1)[0]
+        sanitized = sanitized[:max_length].rsplit(" ", 1)[0]
     return sanitized
 
 
@@ -26,7 +25,7 @@ def truncate_title_words(title: str, max_words: int = 6) -> str:
     words = title.split()
     if len(words) <= max_words:
         return title
-    return ' '.join(words[:max_words])
+    return " ".join(words[:max_words])
 
 
 def format_timestamp(seconds: float) -> str:
@@ -43,7 +42,7 @@ def format_date(date_str: str | None) -> str:
     if not date_str:
         return ""
     try:
-        if re.match(r'^\d{8}$', date_str):
+        if re.match(r"^\d{8}$", date_str):
             return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
         parsed = date_parser.parse(date_str)
         return parsed.strftime("%Y-%m-%d")
@@ -54,15 +53,15 @@ def format_date(date_str: str | None) -> str:
 def extract_video_id(url: str) -> str | None:
     """Extract YouTube video ID from various URL formats."""
     parsed = urlparse(url)
-    if parsed.netloc in ('youtu.be', 'www.youtu.be'):
-        return parsed.path.lstrip('/')
-    if parsed.netloc in ('youtube.com', 'www.youtube.com', 'm.youtube.com'):
-        if parsed.path == '/watch':
+    if parsed.netloc in ("youtu.be", "www.youtu.be"):
+        return parsed.path.lstrip("/")
+    if parsed.netloc in ("youtube.com", "www.youtube.com", "m.youtube.com"):
+        if parsed.path == "/watch":
             query = parse_qs(parsed.query)
-            if 'v' in query:
-                return query['v'][0]
-        if parsed.path.startswith(('/embed/', '/v/')):
-            parts = parsed.path.split('/')
+            if "v" in query:
+                return query["v"][0]
+        if parsed.path.startswith(("/embed/", "/v/")):
+            parts = parsed.path.split("/")
             if len(parts) >= 3:
                 return parts[2]
     return None
@@ -72,13 +71,13 @@ def extract_playlist_id(url: str) -> str | None:
     """Extract YouTube playlist ID from various URL formats."""
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
-    if 'list' in query:
-        return query['list'][0]
+    if "list" in query:
+        return query["list"][0]
     return None
 
 
 # YouTube video IDs are 11 characters: alphanumeric, hyphens, underscores
-_VIDEO_ID_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
 def is_video_id(text: str) -> bool:

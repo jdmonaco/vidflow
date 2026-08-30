@@ -61,7 +61,9 @@ class TestCleanTitle:
         assert result == "My Title"
 
     def test_preserves_normal_title(self):
-        assert _clean_title("Ilya Sutskever - Scaling Research") == "Ilya Sutskever - Scaling Research"
+        assert (
+            _clean_title("Ilya Sutskever - Scaling Research") == "Ilya Sutskever - Scaling Research"
+        )
 
     def test_empty_string(self):
         assert _clean_title("") == ""
@@ -86,7 +88,12 @@ class TestValidateTitle:
         assert _validate_title("Title") is False
 
     def test_too_many_words(self):
-        assert _validate_title("One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen") is False
+        assert (
+            _validate_title(
+                "One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen"
+            )
+            is False
+        )
 
     def test_too_short(self):
         assert _validate_title("A - B C D") is False
@@ -98,7 +105,10 @@ class TestValidateTitle:
         assert _validate_title("Reasonable Title") is True
 
     def test_twelve_words(self):
-        assert _validate_title("One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve") is True
+        assert (
+            _validate_title("One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve")
+            is True
+        )
 
 
 class TestGenerateAiTitle:
@@ -106,9 +116,7 @@ class TestGenerateAiTitle:
 
     def test_successful_generation(self):
         """Successful API call produces a valid AI title."""
-        mock_client = _make_mock_local_client(
-            "Ilya Sutskever - Scaling Neural Networks"
-        )
+        mock_client = _make_mock_local_client("Ilya Sutskever - Scaling Neural Networks")
 
         with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
@@ -138,9 +146,7 @@ class TestGenerateAiTitle:
     def test_api_timeout_falls_back(self):
         """API timeout falls back to original title."""
         mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = TimeoutError(
-            "Request timed out"
-        )
+        mock_client.chat.completions.create.side_effect = TimeoutError("Request timed out")
 
         with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
@@ -155,9 +161,7 @@ class TestGenerateAiTitle:
     def test_gateway_error_falls_back(self):
         """Gateway error (slot unavailable, host asleep) falls back."""
         mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = Exception(
-            "admission_refused"
-        )
+        mock_client.chat.completions.create.side_effect = Exception("admission_refused")
 
         with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(
@@ -193,9 +197,7 @@ class TestGenerateAiTitle:
 
     def test_quoted_output_cleaned(self):
         """Quoted LLM output is cleaned before validation."""
-        mock_client = _make_mock_local_client(
-            '"John Smith - Deep Learning Basics"'
-        )
+        mock_client = _make_mock_local_client('"John Smith - Deep Learning Basics"')
 
         with patch("aikit.local_client", return_value=mock_client):
             result = generate_ai_title(

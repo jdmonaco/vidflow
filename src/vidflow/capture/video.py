@@ -34,22 +34,24 @@ class VideoMetadata:
 
     @property
     def source_type(self) -> str:
-        return 'youtube'
+        return "youtube"
 
 
 class VideoError(Exception):
     """Exception raised for video-related errors."""
+
     pass
 
 
 def get_video_metadata(url: str) -> VideoMetadata:
     """Extract metadata from a YouTube video."""
     cmd = [
-        'yt-dlp',
-        '--dump-json',
-        '--skip-download',
-        '--no-warnings',
-        '--remote-components', 'ejs:github',
+        "yt-dlp",
+        "--dump-json",
+        "--skip-download",
+        "--no-warnings",
+        "--remote-components",
+        "ejs:github",
         url,
     ]
 
@@ -58,24 +60,24 @@ def get_video_metadata(url: str) -> VideoMetadata:
 
         if result.returncode != 0:
             error_msg = result.stderr
-            if 'Private video' in error_msg:
+            if "Private video" in error_msg:
                 raise VideoError(f"Video is private: {url}")
-            if 'Video unavailable' in error_msg:
+            if "Video unavailable" in error_msg:
                 raise VideoError(f"Video is unavailable: {url}")
-            if 'Sign in' in error_msg:
+            if "Sign in" in error_msg:
                 raise VideoError(f"Video requires authentication: {url}")
             raise VideoError(f"Failed to get video metadata: {error_msg}")
 
         info = json.loads(result.stdout)
-        video_id = extract_video_id(url) or info.get('id', '')
+        video_id = extract_video_id(url) or info.get("id", "")
 
         return VideoMetadata(
             video_id=video_id,
-            title=info.get('title', 'Untitled'),
-            channel=info.get('channel', info.get('uploader', 'Unknown')),
-            upload_date=info.get('upload_date', ''),
-            description=info.get('description', ''),
-            duration=float(info.get('duration', 0)),
+            title=info.get("title", "Untitled"),
+            channel=info.get("channel", info.get("uploader", "Unknown")),
+            upload_date=info.get("upload_date", ""),
+            description=info.get("description", ""),
+            duration=float(info.get("duration", 0)),
         )
 
     except subprocess.TimeoutExpired:
@@ -96,13 +98,15 @@ def get_video_metadata(url: str) -> VideoMetadata:
 
 def get_stream_url(url: str) -> str:
     """Get the direct stream URL for a YouTube video."""
-    format_spec = 'bestvideo[height<=480][ext=mp4]/bestvideo[height<=480]/18/best'
+    format_spec = "bestvideo[height<=480][ext=mp4]/bestvideo[height<=480]/18/best"
     cmd = [
-        'yt-dlp',
-        '--format', format_spec,
-        '--get-url',
-        '--no-warnings',
-        '--remote-components', 'ejs:github',
+        "yt-dlp",
+        "--format",
+        format_spec,
+        "--get-url",
+        "--no-warnings",
+        "--remote-components",
+        "ejs:github",
         url,
     ]
 
@@ -127,19 +131,23 @@ def get_stream_url(url: str) -> str:
 def download_video(url: str, output_dir: Path) -> Path:
     """Download video to local file."""
     format_spec = (
-        'bestvideo[height<=1080][height>=720][ext=mp4]+bestaudio[ext=m4a]/'
-        'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/'
-        '18/best'
+        "bestvideo[height<=1080][height>=720][ext=mp4]+bestaudio[ext=m4a]/"
+        "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
+        "18/best"
     )
-    output_template = str(output_dir / '%(id)s.mp4')
+    output_template = str(output_dir / "%(id)s.mp4")
 
     cmd = [
-        'yt-dlp',
-        '--format', format_spec,
-        '--output', output_template,
-        '--no-warnings',
-        '--remote-components', 'ejs:github',
-        '--merge-output-format', 'mp4',
+        "yt-dlp",
+        "--format",
+        format_spec,
+        "--output",
+        output_template,
+        "--no-warnings",
+        "--remote-components",
+        "ejs:github",
+        "--merge-output-format",
+        "mp4",
         url,
     ]
 
@@ -148,19 +156,19 @@ def download_video(url: str, output_dir: Path) -> Path:
 
         if result.returncode != 0:
             error_msg = result.stderr
-            if 'Private video' in error_msg:
+            if "Private video" in error_msg:
                 raise VideoError(f"Video is private: {url}")
-            if 'Video unavailable' in error_msg:
+            if "Video unavailable" in error_msg:
                 raise VideoError(f"Video is unavailable: {url}")
-            if 'Sign in' in error_msg:
+            if "Sign in" in error_msg:
                 raise VideoError(f"Video requires authentication: {url}")
             raise VideoError(f"Failed to download video: {error_msg}")
 
-        video_files = list(output_dir.glob('*.mp4'))
+        video_files = list(output_dir.glob("*.mp4"))
         if not video_files:
-            video_files = list(output_dir.glob('*.webm'))
+            video_files = list(output_dir.glob("*.webm"))
         if not video_files:
-            video_files = list(output_dir.glob('*.mkv'))
+            video_files = list(output_dir.glob("*.mkv"))
 
         if not video_files:
             raise VideoError("Download completed but no video file found")
@@ -184,11 +192,11 @@ def download_video(url: str, output_dir: Path) -> Path:
 def expand_playlist(url: str) -> list[str]:
     """Expand a YouTube playlist URL to a list of video URLs."""
     cmd = [
-        'yt-dlp',
-        '--dump-json',
-        '--flat-playlist',
-        '--skip-download',
-        '--no-warnings',
+        "yt-dlp",
+        "--dump-json",
+        "--flat-playlist",
+        "--skip-download",
+        "--no-warnings",
         url,
     ]
 
@@ -197,19 +205,19 @@ def expand_playlist(url: str) -> list[str]:
 
         if result.returncode != 0:
             error_msg = result.stderr
-            if 'Private' in error_msg:
+            if "Private" in error_msg:
                 raise VideoError(f"Playlist is private: {url}")
-            if 'not exist' in error_msg or 'unavailable' in error_msg.lower():
+            if "not exist" in error_msg or "unavailable" in error_msg.lower():
                 raise VideoError(f"Playlist not found: {url}")
             raise VideoError(f"Failed to expand playlist: {error_msg}")
 
         video_urls: list[str] = []
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if not line:
                 continue
             try:
                 entry = json.loads(line)
-                video_id = entry.get('id')
+                video_id = entry.get("id")
                 if video_id:
                     video_urls.append(f"https://www.youtube.com/watch?v={video_id}")
             except json.JSONDecodeError:

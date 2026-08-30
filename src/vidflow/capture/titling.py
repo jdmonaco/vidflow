@@ -53,6 +53,7 @@ def is_ai_titling_available() -> bool:
     """
     try:
         import aikit  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -93,11 +94,7 @@ def generate_ai_title(
         logger.debug("aikit not installed, falling back to original title")
         return TitleResult(ai_title=title, original_title=title, used_ai=False)
 
-    user_message = (
-        f"Title: {title}\n"
-        f"Channel: {channel}\n"
-        f"Description: {description[:500]}"
-    )
+    user_message = f"Title: {title}\n" f"Channel: {channel}\n" f"Description: {description[:500]}"
 
     try:
         client = aikit.local_client(timeout=_TIMEOUT)

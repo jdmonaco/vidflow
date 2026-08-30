@@ -20,21 +20,24 @@ from pathlib import Path
 from vidflow.capture.transcript import TranscriptSegment
 
 # Text-based subtitle codecs we can extract to WebVTT
-TEXT_SUB_CODECS = frozenset({
-    "mov_text",       # MP4/MOV
-    "subrip",         # SRT in Matroska
-    "srt",
-    "webvtt",
-    "ass",            # Advanced SubStation Alpha
-    "ssa",            # SubStation Alpha
-    "text",           # generic text
-})
+TEXT_SUB_CODECS = frozenset(
+    {
+        "mov_text",  # MP4/MOV
+        "subrip",  # SRT in Matroska
+        "srt",
+        "webvtt",
+        "ass",  # Advanced SubStation Alpha
+        "ssa",  # SubStation Alpha
+        "text",  # generic text
+    }
+)
 
 DEFAULT_LANGUAGE = "en"
 
 
 class SubtitleError(Exception):
     """Exception raised for subtitle extraction errors."""
+
     pass
 
 
@@ -42,8 +45,8 @@ class SubtitleError(Exception):
 class SubtitleStream:
     """Descriptor for an embedded subtitle stream."""
 
-    index: int                # Absolute stream index in the file
-    subtitle_index: int       # Index among subtitle streams only (for -map 0:s:N)
+    index: int  # Absolute stream index in the file
+    subtitle_index: int  # Index among subtitle streams only (for -map 0:s:N)
     codec: str
     language: str | None
     title: str | None
@@ -77,10 +80,13 @@ def probe_subtitle_streams(video_path: Path) -> list[SubtitleStream]:
     """Enumerate embedded subtitle streams via ffprobe."""
     cmd = [
         "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_streams",
-        "-select_streams", "s",
+        "-select_streams",
+        "s",
         str(video_path),
     ]
     try:
@@ -102,16 +108,18 @@ def probe_subtitle_streams(video_path: Path) -> list[SubtitleStream]:
     for sub_idx, stream in enumerate(data.get("streams", [])):
         tags = stream.get("tags") or {}
         disposition = stream.get("disposition") or {}
-        streams.append(SubtitleStream(
-            index=stream.get("index", -1),
-            subtitle_index=sub_idx,
-            codec=stream.get("codec_name", "unknown"),
-            language=tags.get("language"),
-            title=tags.get("title"),
-            is_default=bool(disposition.get("default")),
-            is_forced=bool(disposition.get("forced")),
-            is_hearing_impaired=bool(disposition.get("hearing_impaired")),
-        ))
+        streams.append(
+            SubtitleStream(
+                index=stream.get("index", -1),
+                subtitle_index=sub_idx,
+                codec=stream.get("codec_name", "unknown"),
+                language=tags.get("language"),
+                title=tags.get("title"),
+                is_default=bool(disposition.get("default")),
+                is_forced=bool(disposition.get("forced")),
+                is_hearing_impaired=bool(disposition.get("hearing_impaired")),
+            )
+        )
     return streams
 
 
@@ -143,8 +151,7 @@ def select_subtitle_stream(
         matching = [s for s in streams if s.subtitle_index == track]
         if not matching:
             raise SubtitleError(
-                f"Subtitle track #{track} not found "
-                f"(available: 0..{len(streams) - 1})"
+                f"Subtitle track #{track} not found " f"(available: 0..{len(streams) - 1})"
             )
         return matching[0]
 
@@ -242,11 +249,13 @@ def parse_webvtt(vtt_text: str) -> list[TranscriptSegment]:
 
         text = sanitize_cue_text("\n".join(cue_lines))
         if text:
-            segments.append(TranscriptSegment(
-                text=text,
-                start=start,
-                duration=max(0.0, end - start),
-            ))
+            segments.append(
+                TranscriptSegment(
+                    text=text,
+                    start=start,
+                    duration=max(0.0, end - start),
+                )
+            )
         i += 1
 
     return segments
@@ -270,17 +279,19 @@ def extract_subtitle_track(
         cmd = [
             "ffmpeg",
             "-y",
-            "-loglevel", "error",
-            "-i", str(video_path),
-            "-map", f"0:s:{stream.subtitle_index}",
-            "-c:s", "webvtt",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video_path),
+            "-map",
+            f"0:s:{stream.subtitle_index}",
+            "-c:s",
+            "webvtt",
             str(tmp_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
-            raise SubtitleError(
-                f"ffmpeg subtitle extraction failed: {result.stderr.strip()}"
-            )
+            raise SubtitleError(f"ffmpeg subtitle extraction failed: {result.stderr.strip()}")
 
         vtt_text = tmp_path.read_text(encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as e:

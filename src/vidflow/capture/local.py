@@ -11,6 +11,7 @@ from vidflow.capture.utils import sanitize_title
 
 class LocalVideoError(Exception):
     """Exception raised for local video errors."""
+
     pass
 
 
@@ -52,13 +53,14 @@ class LocalVideoMetadata:
 
     @property
     def source_type(self) -> str:
-        return 'video'
+        return "video"
 
 
 def check_ffprobe() -> bool:
     """Check if ffprobe is available in PATH."""
     import shutil
-    return shutil.which('ffprobe') is not None
+
+    return shutil.which("ffprobe") is not None
 
 
 def get_local_video_metadata(video_path: Path) -> LocalVideoMetadata:
@@ -75,10 +77,12 @@ def get_local_video_metadata(video_path: Path) -> LocalVideoMetadata:
         )
 
     cmd = [
-        'ffprobe',
-        '-v', 'quiet',
-        '-print_format', 'json',
-        '-show_format',
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
         str(video_path),
     ]
 
@@ -89,9 +93,9 @@ def get_local_video_metadata(video_path: Path) -> LocalVideoMetadata:
             raise LocalVideoError(f"ffprobe failed: {result.stderr}")
 
         probe_data = json.loads(result.stdout)
-        format_info = probe_data.get('format', {})
+        format_info = probe_data.get("format", {})
 
-        duration_str = format_info.get('duration', '0')
+        duration_str = format_info.get("duration", "0")
         try:
             duration = float(duration_str)
         except (ValueError, TypeError):
@@ -112,9 +116,9 @@ def get_local_video_metadata(video_path: Path) -> LocalVideoMetadata:
 
     try:
         mtime = video_path.stat().st_mtime
-        creation_date = datetime.fromtimestamp(mtime).strftime('%Y%m%d')
+        creation_date = datetime.fromtimestamp(mtime).strftime("%Y%m%d")
     except Exception:
-        creation_date = datetime.now().strftime('%Y%m%d')
+        creation_date = datetime.now().strftime("%Y%m%d")
 
     return LocalVideoMetadata(
         file_path=video_path,

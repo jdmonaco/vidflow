@@ -31,8 +31,7 @@ def test_escape_hatch_models_are_current():
 
 
 def test_five_family_rejects_temperature():
-    for model in (MODEL_OPUS, MODEL_SONNET, "claude-fable-5",
-                  "claude-opus-4-8", "claude-opus-4-7"):
+    for model in (MODEL_OPUS, MODEL_SONNET, "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7"):
         assert model in FIXED_SAMPLING_MODELS
         assert not model_accepts_temperature(model)
 

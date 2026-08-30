@@ -23,9 +23,7 @@ class TestFfmpegVersion:
         assert self._version_for("ffmpeg version n5.1.2 Copyright ...") == (5, 1)
 
     def test_ubuntu_style(self):
-        assert self._version_for(
-            "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright ..."
-        ) == (4, 4)
+        assert self._version_for("ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright ...") == (4, 4)
 
     def test_unparseable(self):
         assert self._version_for("garbage") == (0, 0)

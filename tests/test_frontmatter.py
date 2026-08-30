@@ -16,9 +16,7 @@ VALID_YAML = (
 
 @pytest.fixture
 def no_warm(monkeypatch):
-    monkeypatch.setattr(
-        "vidflow.transcribe.processor.aikit.warm", lambda *a, **k: None
-    )
+    monkeypatch.setattr("vidflow.transcribe.processor.aikit.warm", lambda *a, **k: None)
 
 
 def _local_response(text: str) -> MagicMock:
@@ -41,9 +39,7 @@ class TestLocalLane:
             api_key=None, model="primary", json_output=True, text_only=True
         )
         processor.local_client = MagicMock()
-        processor.local_client.chat.completions.create.return_value = (
-            _local_response(VALID_YAML)
-        )
+        processor.local_client.chat.completions.create.return_value = _local_response(VALID_YAML)
 
         frontmatter = processor.generate_frontmatter("some transcript")
 
@@ -78,9 +74,7 @@ class TestAnthropicLane:
 
     def test_quick_slot_preferred(self, no_warm):
         processor = self._processor(no_warm)
-        processor.local_client.chat.completions.create.return_value = (
-            _local_response(VALID_YAML)
-        )
+        processor.local_client.chat.completions.create.return_value = _local_response(VALID_YAML)
 
         frontmatter = processor.generate_frontmatter("some transcript")
 
@@ -94,9 +88,7 @@ class TestAnthropicLane:
         processor.local_client.chat.completions.create.side_effect = RuntimeError(
             "admission_refused"
         )
-        processor.client.messages.create.return_value = _anthropic_response(
-            VALID_YAML
-        )
+        processor.client.messages.create.return_value = _anthropic_response(VALID_YAML)
 
         frontmatter = processor.generate_frontmatter("some transcript")
 
@@ -111,9 +103,7 @@ class TestAnthropicLane:
         processor.local_client.chat.completions.create.side_effect = RuntimeError(
             "admission_refused"
         )
-        processor.client.messages.create.return_value = _anthropic_response(
-            VALID_YAML
-        )
+        processor.client.messages.create.return_value = _anthropic_response(VALID_YAML)
 
         processor.generate_frontmatter("some transcript")
 
