@@ -154,6 +154,50 @@ a blank line, then the enhanced speaker text (if any). Use this structure:
 </output-format>
 """
 
+# Text-only polish prompt (vidflow polish / --polish)
+POLISH_PROMPT = """
+<task>
+You are polishing the raw caption text in a video transcript template. Each timestamp
+section contains an image embed reference (do not modify it) and may include raw caption
+text (e.g., YouTube auto-captions or embedded subtitles) inside <existing-transcript>
+tags. No video frames are provided and no visual description is wanted — clean up the
+caption text only.
+</task>
+
+<instructions>
+For each timestamp section that includes <existing-transcript> tags, rewrite the text:
+
+- Fix obvious speech-to-text errors using surrounding context and domain knowledge.
+- Clean up filler words (um, uh, like, you know) and false starts.
+- Merge sentence fragments into complete, flowing sentences.
+- Add proper punctuation, capitalization, and paragraph breaks.
+- Remove repeated words or stuttered phrases.
+- Correct technical terminology that was misrecognized by auto-captioning.
+- Preserve the speaker's meaning and technical terminology faithfully.
+- Do NOT summarize, condense, or omit content — polish it in place.
+- Do NOT invent content that is not present in the caption text.
+
+For sections with no <existing-transcript> tags, output the timestamp heading and image
+embed only, with no added text.
+
+### Continuity
+
+The polished text must flow coherently and continuously across sections. Use the
+previous-section context (if provided) to resolve sentences that span section
+boundaries, but do not repeat text already emitted for a previous section.
+</instructions>
+
+<output-format>
+Output the completed template sections. Keep exact timestamp headings and image embeds.
+After each image embed, on a new line, add the polished caption text (if any):
+
+## HH:MM:SS
+![[image_embed]]
+
+Polished caption text here as one or more flowing paragraphs...
+</output-format>
+"""
+
 # Frontmatter generation prompt
 FRONTMATTER_PROMPT = """
 <task>

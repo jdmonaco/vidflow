@@ -28,7 +28,10 @@ from vidflow.transcribe.prompts import DEFAULT_MAX_DIMENSION
 def main(argv=None):
     """Standalone vidscribe CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Transcribe vidcapture markdown files using Claude Vision",
+        description=(
+            "Transcribe vidcapture markdown files with an AI vision model "
+            "(local gateway by default; claude-* models via the Anthropic API)"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -137,8 +140,7 @@ Examples:
     import aikit
 
     provider = aikit.provider_for(args.model, args.provider)
-    if (provider == "anthropic" and not args.api_key
-            and not args.dry_run and not args.estimate_only):
+    if provider == "anthropic" and not args.api_key and not args.dry_run and not args.estimate_only:
         parser.error(
             "Anthropic API key required for claude-* models. Set "
             "ANTHROPIC_API_KEY environment variable or use -k/--api-key"
@@ -212,11 +214,7 @@ Examples:
                 "sections": len(document.sections),
                 "timestamps": [s.timestamp for s in document.sections],
             }
-            missing = [
-                str(s.image_path)
-                for s in document.sections
-                if not s.image_path.exists()
-            ]
+            missing = [str(s.image_path) for s in document.sections if not s.image_path.exists()]
             if missing:
                 result["missing_images"] = missing
             if ckpt_data:
@@ -245,9 +243,7 @@ Examples:
             print("\nTimestamps:")
             for section in document.sections[:20]:
                 exists = "+" if section.image_path.exists() else "x"
-                print(
-                    f"  [{exists}] {section.timestamp} - {shorten_path(str(section.image_path))}"
-                )
+                print(f"  [{exists}] {section.timestamp} - {shorten_path(str(section.image_path))}")
             if len(document.sections) > 20:
                 print(f"  ... and {len(document.sections) - 20} more")
 
@@ -336,8 +332,7 @@ Examples:
             print(f"  Sections per batch: {args.batch_size}")
             if total_tokens > 50000:
                 print(
-                    "[WARNING: Large batch may hit rate limits. "
-                    "Consider reducing batch size.]"
+                    "[WARNING: Large batch may hit rate limits. " "Consider reducing batch size.]"
                 )
         return 0
 
@@ -349,9 +344,7 @@ Examples:
         print(f"Number of API batches: {num_batches}")
 
         if total_tokens > 50000:
-            print(
-                f"\n[WARNING] This will use approximately {total_tokens:,} input tokens."
-            )
+            print(f"\n[WARNING] This will use approximately {total_tokens:,} input tokens.")
             print("Large batches may hit API rate limits, causing delays.")
             response = input("Continue processing? (y/N): ").strip().lower()
             if response not in ["y", "yes"]:
@@ -361,9 +354,7 @@ Examples:
     # Process the document
     import yaml
 
-    input_desc = (
-        args.inputs[0].name if len(args.inputs) == 1 else f"{len(args.inputs)} files"
-    )
+    input_desc = args.inputs[0].name if len(args.inputs) == 1 else f"{len(args.inputs)} files"
     log(f"Processing {len(document.sections)} sections from {input_desc}...")
     try:
         transcript, frontmatter = processor.process_all(
@@ -382,17 +373,11 @@ Examples:
             log(f"Using user-provided title: {args.title}")
 
     # Build complete document
-    frontmatter_yaml = yaml.dump(
-        frontmatter, default_flow_style=False, allow_unicode=True
-    )
-    full_document = (
-        f"---\n{frontmatter_yaml}---\n\n# {frontmatter['title']}\n\n{transcript}"
-    )
+    frontmatter_yaml = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
+    full_document = f"---\n{frontmatter_yaml}---\n\n# {frontmatter['title']}\n\n{transcript}"
 
     # Determine output path
-    output_path = determine_output_path(
-        args.inputs[0], frontmatter["title"], args.output
-    )
+    output_path = determine_output_path(args.inputs[0], frontmatter["title"], args.output)
 
     # Check if output file exists (prompt only in interactive mode)
     if output_path.exists() and not args.json_output:
@@ -418,9 +403,7 @@ Examples:
             "title": frontmatter["title"],
         }
         if args.context_files:
-            result["context_files"] = [
-                str(Path(f).resolve()) for f in args.context_files
-            ]
+            result["context_files"] = [str(Path(f).resolve()) for f in args.context_files]
         print(json.dumps(result, indent=2))
     else:
         print(f"\nSuccessfully processed {len(document.sections)} sections!")

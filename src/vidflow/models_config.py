@@ -22,13 +22,15 @@ MODEL_HAIKU = "claude-haiku-4-5"
 # Anthropic models that reject non-default temperature/top_p/top_k with
 # HTTP 400: the 5-family and Opus 4.7/4.8. The API call must omit these
 # params when using a model in this set. Local slots all accept temperature.
-FIXED_SAMPLING_MODELS = frozenset({
-    "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-fable-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-})
+FIXED_SAMPLING_MODELS = frozenset(
+    {
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+    }
+)
 
 
 def model_accepts_temperature(model: str) -> bool:
@@ -41,6 +43,9 @@ def model_accepts_temperature(model: str) -> bool:
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_CONTEXT_FRAMES = 3
 DEFAULT_TEMPERATURE = 0.2
+
+# Text-only polish requests carry no images, so batches can run larger
+DEFAULT_POLISH_BATCH_SIZE = 20
 
 
 def add_model_args(parser: argparse.ArgumentParser) -> None:

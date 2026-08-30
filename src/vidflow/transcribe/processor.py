@@ -34,6 +34,7 @@ from vidflow.transcribe.prompts import (
     MAX_REQUEST_SIZE_BYTES,
     MAX_REQUEST_SIZE_MB,
     MAX_TOOL_CALLS_PER_BATCH,
+    POLISH_PROMPT,
     TEMPLATE_FILL_PROMPT,
 )
 
@@ -61,12 +62,18 @@ class VidscribeProcessor:
         json_output: bool = False,
         exa_api_key: Optional[str] = None,
         provider: Optional[str] = None,
+        text_only: bool = False,
     ):
         """Initialize the processor.
 
         The provider is inferred from the model name (claude-* routes to
         Anthropic, anything else to the local gateway) unless overridden.
         api_key is only required on the Anthropic lane.
+
+        text_only enables polish mode: no frame images are sent and the
+        POLISH_PROMPT replaces the vision template-fill prompt, so only the
+        caption text in each section is cleaned up. Citation search is a
+        vision feature (slide references) and is disabled in this mode.
         """
         from vidflow.models_config import DEFAULT_TEMPERATURE, model_accepts_temperature
 
@@ -78,10 +85,12 @@ class VidscribeProcessor:
         self.max_dimension = max_dimension
         self.background_context = background_context
         self.json_output = json_output
+        self.text_only = text_only
         self.console = Console(quiet=json_output)
-        self.magick_cmd = find_magick_command()
+        self.magick_cmd = None if text_only else find_magick_command()
 
-        # Frontmatter always runs locally on the quick slot
+        # Local client serves the local lane and frontmatter generation
+        # (see _request_frontmatter for the model-selection tiers)
         self.local_client = aikit.local_client()
         if self.provider == "anthropic":
             self.client = Anthropic(api_key=api_key)
@@ -97,10 +106,10 @@ class VidscribeProcessor:
                 f"parameters; --temperature {temperature} will be ignored."
             )
 
-        # Exa citation search
+        # Exa citation search (vision mode only)
         self.exa_enabled = False
         self.exa_client = None
-        if exa_api_key:
+        if exa_api_key and not text_only:
             if EXA_AVAILABLE:
                 self.exa_client = ExaClient(api_key=exa_api_key)
                 self.exa_enabled = True
@@ -115,13 +124,10 @@ class VidscribeProcessor:
         prompt_tokens = len(TEMPLATE_FILL_PROMPT) // 4
         if self.exa_enabled:
             prompt_tokens += len(CITATION_SEARCH_PROMPT) // 4
-        context_tokens = (
-            len(self.background_context) // 4 if self.background_context else 0
-        )
-        image_tokens = len(sections) * 1200  # Conservative middle estimate
-        existing_text_tokens = sum(
-            len(s.existing_text) // 4 for s in sections if s.existing_text
-        )
+        context_tokens = len(self.background_context) // 4 if self.background_context else 0
+        # Conservative middle estimate; polish mode sends no images
+        image_tokens = 0 if self.text_only else len(sections) * 1200
+        existing_text_tokens = sum(len(s.existing_text) // 4 for s in sections if s.existing_text)
         return prompt_tokens + context_tokens + image_tokens + existing_text_tokens
 
     def image_to_base64(self, image_path: Path) -> str:
@@ -200,9 +206,10 @@ class VidscribeProcessor:
                     description=f"Rate limit hit. Retrying in {wait_time}s...",
                 )
                 time.sleep(wait_time)
+                verb = "Polishing" if self.text_only else "Transcribing"
                 progress.update(
                     progress_task,
-                    description=f"Transcribing batch with {self.model}",
+                    description=f"{verb} batch with {self.model}",
                 )
 
             except Exception as e:
@@ -220,11 +227,13 @@ class VidscribeProcessor:
         """
         tools = None
         if self.exa_enabled:
-            tools = [aikit.tool_def(
-                EXA_SEARCH_TOOL["name"],
-                EXA_SEARCH_TOOL["description"],
-                EXA_SEARCH_TOOL["input_schema"],
-            )]
+            tools = [
+                aikit.tool_def(
+                    EXA_SEARCH_TOOL["name"],
+                    EXA_SEARCH_TOOL["description"],
+                    EXA_SEARCH_TOOL["input_schema"],
+                )
+            ]
 
         def on_delta(text: str, _seen=[0]) -> None:
             _seen[0] += len(text)
@@ -273,11 +282,13 @@ class VidscribeProcessor:
                         if len(query) > 80
                         else f"[dim]  Searching: {query}[/dim]"
                     )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": self._execute_exa_search(query),
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": self._execute_exa_search(query),
+                        }
+                    )
                 progress.update(
                     progress_task,
                     description=f"Processing citations ({tool_call_count} searches)",
@@ -331,6 +342,8 @@ class VidscribeProcessor:
 
     def _get_batch_prompt(self) -> str:
         """Return the prompt text for batch processing."""
+        if self.text_only:
+            return POLISH_PROMPT
         prompt_text = TEMPLATE_FILL_PROMPT
         if self.exa_enabled:
             prompt_text += CITATION_SEARCH_PROMPT
@@ -347,9 +360,7 @@ class VidscribeProcessor:
             template_text += f"## {sec.timestamp}\n{sec.image_embed}\n"
             if sec.existing_text:
                 template_text += (
-                    f"<existing-transcript>\n"
-                    f"{sec.existing_text}\n"
-                    f"</existing-transcript>\n"
+                    f"<existing-transcript>\n" f"{sec.existing_text}\n" f"</existing-transcript>\n"
                 )
             template_text += "\n"
         template_text += "</template-to-fill>"
@@ -379,64 +390,62 @@ class VidscribeProcessor:
         """
         content = []
 
-        # Images first (per Claude Vision API guidance: images before text)
-        content.append({"type": "text", "text": "<frame-images>\n"})
+        # Images first (per Claude Vision API guidance: images before text);
+        # polish mode is text-only and sends no frame images at all
+        if not self.text_only:
+            content.append({"type": "text", "text": "<frame-images>\n"})
 
-        # Track request size (estimate text content size for limit checking)
-        text_size_estimate = len(self._get_batch_prompt()) + len(self.background_context)
-        request_size_bytes = text_size_estimate
-        images_included = 0
+            # Track request size (estimate text content size for limit checking)
+            text_size_estimate = len(self._get_batch_prompt()) + len(self.background_context)
+            request_size_bytes = text_size_estimate
+            images_included = 0
 
-        # Add images for each section
-        for i, section in enumerate(sections):
-            if not section.image_path.exists():
-                self.console.print(
-                    f"[yellow]Warning: Image not found: {section.image_path}[/yellow]"
+            # Add images for each section
+            for i, section in enumerate(sections):
+                if not section.image_path.exists():
+                    self.console.print(
+                        f"[yellow]Warning: Image not found: {section.image_path}[/yellow]"
+                    )
+                    continue
+
+                # Prepare (resize) the image
+                prepared_path = self.prepare_image(
+                    section.image_path, temp_dir, batch_num * 1000 + i
                 )
-                continue
+                base64_image = self.image_to_base64(prepared_path)
+                image_size_bytes = len(base64_image.encode("utf-8"))
 
-            # Prepare (resize) the image
-            prepared_path = self.prepare_image(
-                section.image_path, temp_dir, batch_num * 1000 + i
-            )
-            base64_image = self.image_to_base64(prepared_path)
-            image_size_bytes = len(base64_image.encode("utf-8"))
+                # Check size limit
+                if request_size_bytes + image_size_bytes > MAX_REQUEST_SIZE_BYTES:
+                    self.console.print(
+                        f"[yellow]Request size limit ({MAX_REQUEST_SIZE_MB}MB) "
+                        f"reached after {images_included}/{len(sections)} "
+                        f"images in batch[/yellow]"
+                    )
+                    break
 
-            # Check size limit
-            if request_size_bytes + image_size_bytes > MAX_REQUEST_SIZE_BYTES:
-                self.console.print(
-                    f"[yellow]Request size limit ({MAX_REQUEST_SIZE_MB}MB) "
-                    f"reached after {images_included}/{len(sections)} "
-                    f"images in batch[/yellow]"
-                )
-                break
+                request_size_bytes += image_size_bytes
+                images_included += 1
 
-            request_size_bytes += image_size_bytes
-            images_included += 1
+                # Add timestamp label
+                content.append({"type": "text", "text": f"\n[Frame: {section.timestamp}]\n"})
 
-            # Add timestamp label
-            content.append(
-                {"type": "text", "text": f"\n[Frame: {section.timestamp}]\n"}
-            )
+                # Add image (provider-specific block shape)
+                if self.provider == "anthropic":
+                    image_block = {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": self.get_media_type(prepared_path),
+                            "data": base64_image,
+                        },
+                    }
+                else:
+                    image_block = aikit.image_part(base64_image, self.get_media_type(prepared_path))
+                content.append(image_block)
 
-            # Add image (provider-specific block shape)
-            if self.provider == "anthropic":
-                image_block = {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": self.get_media_type(prepared_path),
-                        "data": base64_image,
-                    },
-                }
-            else:
-                image_block = aikit.image_part(
-                    base64_image, self.get_media_type(prepared_path)
-                )
-            content.append(image_block)
-
-        # Close the frame-images tag
-        content.append({"type": "text", "text": "\n</frame-images>\n\n"})
+            # Close the frame-images tag
+            content.append({"type": "text", "text": "\n</frame-images>\n\n"})
 
         # Add background context if available. Anthropic gets an explicit
         # cache_control breakpoint; the local SGLang backend radix-caches
@@ -453,11 +462,11 @@ class VidscribeProcessor:
         # Add previous transcription context if available
         if previous_sections:
             context_text = "<previous-transcription-context>\n"
-            context_text += "The following are the most recent transcribed sections. Use for continuity:\n\n"
+            context_text += (
+                "The following are the most recent transcribed sections. Use for continuity:\n\n"
+            )
             for sec in previous_sections:
-                context_text += (
-                    f"## {sec.timestamp}\n{sec.image_embed}\n{sec.content}\n\n"
-                )
+                context_text += f"## {sec.timestamp}\n{sec.image_embed}\n{sec.content}\n\n"
             context_text += "</previous-transcription-context>\n\n"
             content.append({"type": "text", "text": context_text})
 
@@ -466,8 +475,9 @@ class VidscribeProcessor:
         content.append({"type": "text", "text": self._build_batch_template(sections)})
 
         # Make API request
+        verb = "Polishing" if self.text_only else "Transcribing"
         api_task = progress.add_task(
-            f"Transcribing batch {batch_num}/{total_batches} with {self.model}",
+            f"{verb} batch {batch_num}/{total_batches} with {self.model}",
             total=100,
         )
 
@@ -494,11 +504,7 @@ class VidscribeProcessor:
             and tool_call_count < MAX_TOOL_CALLS_PER_BATCH
         ):
             # Extract tool_use blocks from the response
-            tool_use_blocks = [
-                block
-                for block in final_message.content
-                if block.type == "tool_use"
-            ]
+            tool_use_blocks = [block for block in final_message.content if block.type == "tool_use"]
 
             if not tool_use_blocks:
                 break
@@ -509,12 +515,14 @@ class VidscribeProcessor:
                 if block.type == "text":
                     assistant_content.append({"type": "text", "text": block.text})
                 elif block.type == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                    )
             messages.append({"role": "assistant", "content": assistant_content})
 
             # Execute each tool call and collect results
@@ -528,11 +536,13 @@ class VidscribeProcessor:
                     else f"[dim]  Searching: {query}[/dim]"
                 )
                 result = self._execute_exa_search(query)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    }
+                )
 
             messages.append({"role": "user", "content": tool_results})
 
@@ -542,10 +552,8 @@ class VidscribeProcessor:
                 completed=0,
             )
 
-            continued_text, stop_reason, final_message = (
-                self._make_streaming_api_request(
-                    messages, api_task, progress, tools=tools
-                )
+            continued_text, stop_reason, final_message = self._make_streaming_api_request(
+                messages, api_task, progress, tools=tools
             )
             response_text += continued_text
 
@@ -560,8 +568,7 @@ class VidscribeProcessor:
         continuation_count = 0
 
         while (
-            stop_reason in ["max_tokens", "pause_turn"]
-            and continuation_count < max_continuations
+            stop_reason in ["max_tokens", "pause_turn"] and continuation_count < max_continuations
         ):
             continuation_count += 1
             self.console.print(
@@ -575,23 +582,27 @@ class VidscribeProcessor:
                 if block.type == "text":
                     assistant_content.append({"type": "text", "text": block.text})
                 elif block.type == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                    )
             messages.append({"role": "assistant", "content": assistant_content})
 
             # Append a user-role continuation prompt
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Your previous response was truncated. Continue the transcript "
-                    "exactly where you left off. Do not repeat any content already "
-                    "provided."
-                ),
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous response was truncated. Continue the transcript "
+                        "exactly where you left off. Do not repeat any content already "
+                        "provided."
+                    ),
+                }
+            )
 
             progress.update(
                 api_task,
@@ -599,8 +610,8 @@ class VidscribeProcessor:
                 completed=0,
             )
 
-            continued_text, stop_reason, final_message = (
-                self._make_streaming_api_request(messages, api_task, progress)
+            continued_text, stop_reason, final_message = self._make_streaming_api_request(
+                messages, api_task, progress
             )
             response_text += continued_text
 
@@ -650,6 +661,55 @@ class VidscribeProcessor:
 
         return results
 
+    def _request_frontmatter(self, prompt_text: str) -> str:
+        """Request the frontmatter YAML from the best available model.
+
+        On the local lane the session model is used directly: it is the
+        resident backend that just served the batches, so admission cannot
+        be refused — the quick slot, by contrast, may not fit alongside it
+        (gateway 409 admission_refused when VRAM is tight). On the
+        Anthropic lane the free local quick slot is tried first, falling
+        back to the session's Anthropic model.
+
+        Reasoning tokens count against max_tokens on the local models, so
+        leave generous headroom above the ~15-line YAML output.
+        """
+        from vidflow.models_config import LOCAL_QUICK
+
+        messages = [{"role": "user", "content": prompt_text}]
+
+        if self.provider == "local":
+            response = self.local_client.chat.completions.create(
+                model=self.model,
+                max_tokens=1500,
+                temperature=0.1,
+                messages=messages,
+            )
+            return response.choices[0].message.content or ""
+
+        try:
+            response = self.local_client.chat.completions.create(
+                model=LOCAL_QUICK,
+                max_tokens=1500,
+                temperature=0.1,
+                messages=messages,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            self.console.print(
+                f"[yellow]Warning: Local quick slot unavailable for frontmatter "
+                f"({e}), using {self.model}[/yellow]"
+            )
+            kwargs = dict(
+                model=self.model,
+                max_tokens=1500,
+                messages=messages,
+            )
+            if self.supports_temperature:
+                kwargs["temperature"] = 0.1
+            response = self.client.messages.create(**kwargs)
+            return response.content[0].text
+
     def generate_frontmatter(self, transcript: str) -> Dict:
         """Generate YAML frontmatter based on transcript content."""
         # Build the prompt
@@ -657,7 +717,9 @@ class VidscribeProcessor:
         prompt_text += f"\n\nToday's date: {date.today().isoformat()}\n"
 
         if self.background_context:
-            prompt_text += f"\n<background-context>\n{self.background_context}\n</background-context>\n"
+            prompt_text += (
+                f"\n<background-context>\n{self.background_context}\n</background-context>\n"
+            )
 
         # Truncate transcript if needed, keeping beginning and end for context
         max_transcript_chars = 8000
@@ -676,18 +738,7 @@ class VidscribeProcessor:
         prompt_text += f"\n<transcript>\n{truncated}\n</transcript>"
 
         try:
-            # Frontmatter always runs locally on the quick slot (small task);
-            # the static fallback below covers an unavailable slot.
-            # Reasoning tokens count against max_tokens on the local models,
-            # so leave generous headroom above the ~15-line YAML output.
-            response = self.local_client.chat.completions.create(
-                model="quick",
-                max_tokens=1500,
-                temperature=0.1,
-                messages=[{"role": "user", "content": prompt_text}],
-            )
-
-            yaml_text = (response.choices[0].message.content or "").strip()
+            yaml_text = self._request_frontmatter(prompt_text).strip()
 
             # Remove markdown code fence if present
             if yaml_text.startswith("```"):
@@ -789,6 +840,7 @@ class VidscribeProcessor:
         document: VidcaptureDocument,
         checkpoint_path: Optional[Path] = None,
         input_paths: Optional[List[Path]] = None,
+        with_frontmatter: bool = True,
     ) -> Tuple[str, Dict]:
         """Process all sections in a vidcapture document.
 
@@ -796,6 +848,9 @@ class VidscribeProcessor:
             document: Parsed vidcapture document
             checkpoint_path: Path for checkpoint file (enables resume)
             input_paths: Original input file paths (for checkpoint validation)
+            with_frontmatter: Generate frontmatter from the result; False
+                skips the model call and returns an empty dict (used by
+                in-place polish, which keeps the original frontmatter)
 
         Returns:
             Tuple of (filled_transcript, frontmatter_dict)
@@ -811,30 +866,31 @@ class VidscribeProcessor:
                 TimeElapsedColumn(),
                 console=self.console,
             ) as progress:
-                # Validate all images exist
-                valid_sections = []
-                missing_count = 0
-                for section in document.sections:
-                    if section.image_path.exists():
-                        valid_sections.append(section)
-                    else:
-                        missing_count += 1
+                # Validate all images exist (polish mode never reads them)
+                if self.text_only:
+                    valid_sections = list(document.sections)
+                else:
+                    valid_sections = []
+                    missing_count = 0
+                    for section in document.sections:
+                        if section.image_path.exists():
+                            valid_sections.append(section)
+                        else:
+                            missing_count += 1
+                            self.console.print(
+                                f"[yellow]Warning: Missing image: {section.image_path}[/yellow]"
+                            )
+
+                    if missing_count > 0:
                         self.console.print(
-                            f"[yellow]Warning: Missing image: {section.image_path}[/yellow]"
+                            f"[yellow]Skipping {missing_count} sections with missing images[/yellow]"
                         )
 
-                if missing_count > 0:
-                    self.console.print(
-                        f"[yellow]Skipping {missing_count} sections with missing images[/yellow]"
-                    )
-
-                if not valid_sections:
-                    raise RuntimeError("No valid sections with existing images found")
+                    if not valid_sections:
+                        raise RuntimeError("No valid sections with existing images found")
 
                 # Process in batches
-                total_batches = (
-                    len(valid_sections) + self.batch_size - 1
-                ) // self.batch_size
+                total_batches = (len(valid_sections) + self.batch_size - 1) // self.batch_size
 
                 filled_sections = []
                 start_batch = 0
@@ -864,7 +920,7 @@ class VidscribeProcessor:
                     # Build context from previous filled sections
                     context_sections = []
                     if filled_sections and self.context_frames > 0:
-                        context_sections = filled_sections[-self.context_frames:]
+                        context_sections = filled_sections[-self.context_frames :]
 
                     # Process batch
                     self.console.print(
@@ -913,9 +969,11 @@ class VidscribeProcessor:
 
                 transcript = "\n".join(transcript_lines)
 
-                # Generate frontmatter
-                self.console.print("\n[bold]Generating frontmatter...[/bold]")
-                frontmatter = self.generate_frontmatter(transcript)
+                # Generate frontmatter (skipped for in-place polish)
+                frontmatter: Dict = {}
+                if with_frontmatter:
+                    self.console.print("\n[bold]Generating frontmatter...[/bold]")
+                    frontmatter = self.generate_frontmatter(transcript)
 
                 # Clean up checkpoint on successful completion
                 if checkpoint_path and checkpoint_path.exists():

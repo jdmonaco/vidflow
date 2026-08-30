@@ -12,7 +12,12 @@ from typing import Optional
 import yaml
 
 from .cli_common import OperationResult
-from .models_config import DEFAULT_BATCH_SIZE, DEFAULT_CONTEXT_FRAMES, DEFAULT_MODEL, DEFAULT_TEMPERATURE
+from .models_config import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_CONTEXT_FRAMES,
+    DEFAULT_MODEL,
+    DEFAULT_TEMPERATURE,
+)
 
 
 def transcribe_youtube(
@@ -25,6 +30,7 @@ def transcribe_youtube(
     context_frames: int = DEFAULT_CONTEXT_FRAMES,
     temperature: float = DEFAULT_TEMPERATURE,
     max_dimension: int = 1568,
+    provider: Optional[str] = None,
     auto_confirm: bool = False,
     dry_run: bool = False,
     estimate_only: bool = False,
@@ -46,6 +52,8 @@ def transcribe_youtube(
         context_frames: Previous frames for continuity context.
         temperature: API temperature.
         max_dimension: Max image dimension.
+        provider: Force a provider lane ("local"/"anthropic") instead of
+            inferring it from the model name.
         auto_confirm: Skip confirmation prompts.
         dry_run: Show what would be done.
         estimate_only: Only estimate tokens.
@@ -58,16 +66,14 @@ def transcribe_youtube(
         VidscribeProcessor,
         determine_output_path,
         load_context_files,
+        merge_frontmatter,
         parse_vidcapture_markdown,
+        resolve_api_key,
     )
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return OperationResult(
-            success=False,
-            message="ANTHROPIC_API_KEY environment variable not set",
-            errors=["ANTHROPIC_API_KEY is required for transcription"],
-        )
+    api_key, key_error = resolve_api_key(model, provider)
+    if key_error:
+        return key_error
 
     exa_api_key = os.environ.get("EXA_API_KEY")
 
@@ -75,9 +81,7 @@ def transcribe_youtube(
         # Parse with vidscribe's native parser (captures existing_text)
         document = parse_vidcapture_markdown(input_path)
         total_sections = len(document.sections)
-        sections_with_transcript = sum(
-            1 for s in document.sections if s.existing_text
-        )
+        sections_with_transcript = sum(1 for s in document.sections if s.existing_text)
 
         # Load context
         background_context = ""
@@ -95,16 +99,14 @@ def transcribe_youtube(
             background_context=background_context,
             json_output=json_output,
             exa_api_key=exa_api_key,
+            provider=provider,
         )
 
         if estimate_only:
             estimate = processor.estimate_tokens(document.sections)
             return OperationResult(
                 success=True,
-                message=(
-                    f"Estimated {estimate:,} tokens "
-                    f"for {total_sections} sections"
-                ),
+                message=(f"Estimated {estimate:,} tokens " f"for {total_sections} sections"),
                 data={"estimate": estimate, "sections": total_sections},
             )
 
@@ -127,9 +129,11 @@ def transcribe_youtube(
         # Delegate to vidscribe's process_all
         transcript_text, frontmatter_data = processor.process_all(document)
 
-        # Use provided title or generated frontmatter title
+        # Preserve capture frontmatter (source, published, author, ...)
+        # under the generated fields, then apply any title override
+        frontmatter_data = merge_frontmatter(document.frontmatter, frontmatter_data)
         if title:
-            frontmatter_data = {"title": title}
+            frontmatter_data["title"] = title
         else:
             title = frontmatter_data.get("title", document.title or "Untitled")
 
@@ -141,9 +145,7 @@ def transcribe_youtube(
         )
 
         # Build final markdown
-        fm_yaml = yaml.dump(
-            frontmatter_data, default_flow_style=False, sort_keys=False
-        ).strip()
+        fm_yaml = yaml.dump(frontmatter_data, default_flow_style=False, sort_keys=False).strip()
         final_md = f"---\n{fm_yaml}\n---\n\n"
         final_md += f"# {title}\n\n"
         final_md += transcript_text

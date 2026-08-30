@@ -40,7 +40,7 @@ dedup_threshold: 0.85  # 0.0-1.0, higher = more aggressive dedup [0.85]
 language: en           # Transcript language code [en]
 prefer_manual: false   # Only use manual transcripts [false]
 keep_video: false      # Keep downloaded video file [false]
-ai_title: true         # Use AI (Claude Haiku) to generate concise titles [true]
+ai_title: true         # Use AI (local quick slot) to generate concise titles [true]
 
 # Local video capture defaults
 fast: true             # Use fast keyframe seeking [true]

@@ -47,18 +47,19 @@ _vidflow_completions() {
     local subcmd=""
     for word in "${COMP_WORDS[@]:1}"; do
         case "$word" in
-            youtube|local|transcribe) subcmd="$word"; break ;;
+            youtube|local|transcribe|polish) subcmd="$word"; break ;;
         esac
     done
 
     # Subcommand completion at position 1
     if [[ -z "$subcmd" ]]; then
-        COMPREPLY=($(compgen -W "youtube local transcribe completion" -- "$cur"))
+        COMPREPLY=($(compgen -W "youtube local transcribe polish completion" -- "$cur"))
         return 0
     fi
 
     # Common transcribe flags
-    local transcribe_flags="-m --model --batch-size --context-frames --temperature --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only"
+    local transcribe_flags="-m --model --provider --batch-size --context-frames --temperature --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only"
+    local polish_flags="-m --model --provider --batch-size --context-frames --temperature -c --context -t --title -y --yes --dry-run --estimate-only"
     local common_flags="-v --verbose -q --quiet --json -h --help"
 
     # Flags requiring specific argument completion
@@ -71,6 +72,10 @@ _vidflow_completions() {
             COMPREPLY=($(compgen -W "jpg png" -- "$cur"))
             return 0
             ;;
+        --provider)
+            COMPREPLY=($(compgen -W "local anthropic" -- "$cur"))
+            return 0
+            ;;
         -m|--model|--language|-t|--title)
             # User types these manually
             return 0
@@ -80,7 +85,7 @@ _vidflow_completions() {
             mapfile -t COMPREPLY < <(compgen -f -- "$cur")
             return 0
             ;;
-        --interval|--max-frames|--batch-size|--context-frames|--temperature|--max-dimension|--dedup-threshold)
+        --interval|--max-frames|--batch-size|--context-frames|--temperature|--max-dimension|--dedup-threshold|--subtitle-track)
             # Numeric arguments, no completion
             return 0
             ;;
@@ -91,13 +96,16 @@ _vidflow_completions() {
         local opts=""
         case "$subcmd" in
             youtube)
-                opts="-o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title --transcribe --merge $transcribe_flags $common_flags"
+                opts="-o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title --transcribe --polish --merge $transcribe_flags $common_flags"
                 ;;
             local)
-                opts="-o --output --interval --max-frames --frame-format --dedup-threshold --no-dedup --fast --no-fast -f --force --transcribe --merge $transcribe_flags $common_flags"
+                opts="-o --output --interval --max-frames --frame-format --dedup-threshold --no-dedup --fast --no-fast -f --force --no-subtitles --subtitle-track --list-subtitles --transcribe --polish --merge $transcribe_flags $common_flags"
                 ;;
             transcribe)
                 opts="-o --output $transcribe_flags $common_flags"
+                ;;
+            polish)
+                opts="-o --output $polish_flags $common_flags"
                 ;;
         esac
         COMPREPLY=($(compgen -W "$opts" -- "$cur"))
@@ -113,7 +121,7 @@ _vidflow_completions() {
         local)
             _vidflow_complete_files_or_dirs "$cur" "*.@(mp4|mkv|avi|mov|webm|flv|wmv)"
             ;;
-        transcribe)
+        transcribe|polish)
             _vidflow_complete_files_or_dirs "$cur" "*.md"
             ;;
     esac

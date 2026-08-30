@@ -28,8 +28,11 @@ vidflow youtube https://youtube.com/watch?v=VIDEO_ID
 # Bare video IDs also work
 ytcapture dQw4w9WgXcQ
 
-# Capture + transcribe in one step
+# Capture + full visual transcription in one step
 vidflow youtube URL --transcribe
+
+# Capture + text-only caption polish (cheaper: no frames sent)
+vidflow youtube URL --polish
 
 # Multiple videos
 vidflow youtube URL1 URL2 --transcribe
@@ -65,6 +68,26 @@ vidflow transcribe capture.md --estimate-only
 
 # Dry run
 vidflow transcribe capture.md --dry-run
+```
+
+### Polish existing captures (text-only)
+
+`polish` is the lightweight alternative to `transcribe`: it sends only the collated caption text (YouTube auto-captions or embedded subtitles) to the configured model for cleanup — speech-to-text errors, filler words, punctuation, paragraphing — without sending any frame images. Sections without caption text pass through unchanged; frames-only captures are rejected (use `transcribe`).
+
+A single input is polished **in place**: the section text is replaced while the file's frontmatter, title, and preamble (video embed, description) are preserved verbatim, and no frontmatter is generated. The raw captions remain recoverable in `transcripts/raw-transcript-<id>.json`. Passing `-o`, or multiple inputs (always merged), writes a new file whose generated frontmatter is merged over the original — capture keys like `source`, `published`, and `author` are preserved.
+
+```bash
+# Polish a capture markdown in place
+vidflow polish capture.md
+
+# Write a new polished file instead
+vidflow polish capture.md -o polished.md
+
+# Merge multiple captures into one polished transcript
+vidflow polish part1.md part2.md -o combined.md
+
+# Estimate token usage before processing
+vidflow polish capture.md --estimate-only
 ```
 
 ### Standalone commands
@@ -122,6 +145,16 @@ vidflow local file.mp4 --transcribe
 
 When transcribing YouTube captures, existing auto-caption text is passed to the model via `<existing-transcript>` tags, instructing it to enhance and correct using visual frame context rather than transcribing from scratch.
 
+```
+vidflow polish capture.md
+  |
+  +- vidflow.transcribe.polish_markdown()
+       +- parse_vidcapture_markdown()           -> collects caption text per section
+       +- VidscribeProcessor(text_only=True)    -> text-only cleanup, no frames sent
+```
+
+Polish reuses the same processor, batching, retry, and continuity machinery as transcribe; `text_only` mode swaps the prompt (`POLISH_PROMPT`), skips image preparation, and disables citation search.
+
 ## Multi-input behavior
 
 | Command | Default | With `--merge` |
@@ -129,7 +162,9 @@ When transcribing YouTube captures, existing auto-caption text is passed to the 
 | `youtube URL1 URL2` | Independent (2 outputs) | Merged (1 output) |
 | `local f1.mp4 f2.mp4` | Independent (2 outputs) | Merged (1 output) |
 | `transcribe f1.md f2.md` | Merged (1 output) | N/A (always merged) |
+| `polish f1.md` | In-place update | — |
+| `polish f1.md f2.md` | Merged (1 new output) | N/A (always merged) |
 
 ## Version
 
-0.2.1
+0.3.0

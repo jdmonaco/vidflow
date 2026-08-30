@@ -6,7 +6,7 @@ Always read `~/tools/AGENTS.md` first for ecosystem-wide context and development
 
 ## Overview
 
-vidflow is a unified video capture and transcription CLI. It consolidates the former ytcapture (YouTube/local video frame extraction) and vidscribe (Claude Vision transcription) into a single installable package with four entry points: `vidflow`, `ytcapture`, `vidcapture`, and `vidscribe`.
+vidflow is a unified video capture and transcription CLI. It consolidates the former ytcapture (YouTube/local video frame extraction) and vidscribe (AI vision transcription) into a single installable package with four entry points: `vidflow`, `ytcapture`, `vidcapture`, and `vidscribe`. Inference runs on the local ampere-gateway by default (via `~/tools/aikit`); claude-* model ids route to the Anthropic API as the escape hatch.
 
 ## Architecture
 
@@ -14,12 +14,20 @@ vidflow is a unified video capture and transcription CLI. It consolidates the fo
 
 - `vidflow youtube <url>...` — Capture YouTube video frames
 - `vidflow local <file>...` — Capture local video frames
-- `vidflow transcribe <markdown>...` — Transcribe captured frames
+- `vidflow transcribe <markdown>...` — Full visual transcription of captured frames
+- `vidflow polish <markdown>...` — Text-only cleanup of captured caption text
 - `ytcapture` — Standalone backward-compatible YouTube capture
 - `vidcapture` — Standalone backward-compatible local video capture
 - `vidscribe` — Standalone backward-compatible transcription
 
-The `--transcribe` flag on `youtube` and `local` chains capture and transcription in one step.
+The `--transcribe` and `--polish` flags on `youtube` and `local` (mutually exclusive) chain capture and post-processing in one step.
+
+### Post-processing tiers
+
+Both tiers run through `VidscribeProcessor`; polish is its `text_only` mode:
+
+- **transcribe** — frames + captions to a vision model; describes slide content and enhances/corrects caption text with visual context (`TEMPLATE_FILL_PROMPT`).
+- **polish** — captions only, no frames sent; corrects speech-to-text errors, filler words, punctuation, and paragraphing (`POLISH_PROMPT`). Cheap and fast; requires caption text (YouTube auto-captions or embedded subtitles) in the capture. Citation search (Exa) is disabled in this mode. A single input is polished **in place** (frontmatter/title/preamble preserved verbatim, no frontmatter generation); `-o` or multiple inputs write a new file whose generated frontmatter is merged over the original via `merge_frontmatter` (capture keys like `source`/`published`/`author` survive — transcribe uses the same merge).
 
 ### Transcript handling
 
@@ -48,7 +56,7 @@ src/vidflow/
 │   ├── local.py             # Local video metadata (ffprobe)
 │   ├── markdown.py          # Obsidian markdown generation
 │   ├── metadata.py          # VideoMetadataProtocol
-│   ├── titling.py           # AI title generation (Claude Haiku)
+│   ├── titling.py           # AI title generation (local quick slot)
 │   ├── transcript.py        # YouTube transcript fetching
 │   ├── utils.py             # URL parsing, formatting
 │   ├── video.py             # yt-dlp wrapper
@@ -81,8 +89,9 @@ uv run ruff check src/ tests/   # Lint
 
 ## Environment
 
-- `ANTHROPIC_API_KEY` — Required for transcription and AI title generation
-- `EXA_API_KEY` — Optional, enables citation search during transcription
+- `ANTHROPIC_API_KEY` — Required only for claude-* models (the Anthropic escape hatch); the local gateway lane needs no key
+- `AMPERE_GATEWAY_URL` — Optional, gateway origin override (default: `http://ampere.lan:8080`)
+- `EXA_API_KEY` — Optional, enables citation search during transcription (not polish)
 
 ## SPEC.md compliance
 

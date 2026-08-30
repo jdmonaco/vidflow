@@ -3,7 +3,8 @@
 Provides subcommands for video capture and transcription:
 - youtube: Capture frames from YouTube videos
 - local: Capture frames from local video files
-- transcribe: Transcribe captured video frames
+- transcribe: Full visual transcription of captured video frames
+- polish: Text-only cleanup of captured caption text
 """
 
 import argparse
@@ -21,48 +22,56 @@ from vidflow.cli_common import (
 from vidflow.models_config import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_CONTEXT_FRAMES,
+    DEFAULT_POLISH_BATCH_SIZE,
     add_model_args,
 )
 
 
-def _add_transcribe_args(parser: argparse.ArgumentParser) -> None:
+def _add_transcribe_args(parser: argparse.ArgumentParser, images: bool = True) -> None:
     """Add vidscribe transcription options to a parser.
 
-    Used by youtube and local subcommands when --transcribe is set,
-    and by the transcribe subcommand directly.
+    Used by youtube and local subcommands (shared by --transcribe and
+    --polish), and by the transcribe and polish subcommands directly.
+    images=False (polish) skips image options and raises the batch default,
+    since text-only requests carry no frame payloads.
     """
     add_model_args(parser)
+    batch_default = DEFAULT_BATCH_SIZE if images else DEFAULT_POLISH_BATCH_SIZE
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=DEFAULT_BATCH_SIZE,
-        help=f"Frames per API batch (default: {DEFAULT_BATCH_SIZE})",
+        default=batch_default,
+        help=f"Sections per API batch (default: {batch_default})",
     )
     parser.add_argument(
         "--context-frames",
         type=int,
         default=DEFAULT_CONTEXT_FRAMES,
-        help=f"Previous frames for continuity context (default: {DEFAULT_CONTEXT_FRAMES})",
+        help=f"Previous sections for continuity context (default: {DEFAULT_CONTEXT_FRAMES})",
     )
+    if images:
+        parser.add_argument(
+            "--max-dimension",
+            type=int,
+            default=1568,
+            help="Max image dimension for resizing (default: 1568)",
+        )
     parser.add_argument(
-        "--max-dimension",
-        type=int,
-        default=1568,
-        help="Max image dimension for resizing (default: 1568)",
-    )
-    parser.add_argument(
-        "-c", "--context",
+        "-c",
+        "--context",
         action="append",
         dest="context_files",
         type=Path,
         help="Background context file (repeatable)",
     )
     parser.add_argument(
-        "-t", "--title",
+        "-t",
+        "--title",
         help="Override title (auto-generated if omitted)",
     )
     parser.add_argument(
-        "-y", "--yes",
+        "-y",
+        "--yes",
         action="store_true",
         help="Skip confirmation prompts",
     )
@@ -88,32 +97,33 @@ def build_parser() -> argparse.ArgumentParser:
 Commands:
   youtube     Capture frames from YouTube videos
   local       Capture frames from local video files
-  transcribe  Transcribe captured video frames with Claude Vision
+  transcribe  Full visual transcription of captured frames (frames + captions)
+  polish      Text-only cleanup of captured caption text (in place by default)
+
+Models default to the local inference gateway; claude-* ids route to the
+Anthropic API as the quality escape hatch.
 
 Examples:
   vidflow youtube https://youtube.com/watch?v=...
   vidflow youtube URL1 URL2 --transcribe
-  vidflow youtube URL --transcribe --merge -m claude-sonnet-4-6
+  vidflow youtube URL --polish
+  vidflow youtube URL --transcribe --merge -m claude-opus-5
   vidflow local recording.mp4 --transcribe
   vidflow local *.mp4 --merge --transcribe
   vidflow transcribe part1.md part2.md -o combined.md
+  vidflow polish capture.md
 """,
     )
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # --- youtube subcommand ---
-    yt_parser = subparsers.add_parser(
-        "youtube", help="Capture frames from YouTube videos"
-    )
+    yt_parser = subparsers.add_parser("youtube", help="Capture frames from YouTube videos")
+    yt_parser.add_argument("urls", nargs="+", help="YouTube video URL(s)")
     yt_parser.add_argument(
-        "urls", nargs="+", help="YouTube video URL(s)"
-    )
-    yt_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=Path,
         help="Output directory (default: current directory)",
     )
@@ -165,10 +175,16 @@ Examples:
         action="store_true",
         help="Skip AI title generation",
     )
-    yt_parser.add_argument(
+    yt_post = yt_parser.add_mutually_exclusive_group()
+    yt_post.add_argument(
         "--transcribe",
         action="store_true",
-        help="Also transcribe captured frames with Claude Vision",
+        help="Also run full visual transcription on captured frames",
+    )
+    yt_post.add_argument(
+        "--polish",
+        action="store_true",
+        help="Also polish captured caption text in place (text-only, no frames sent)",
     )
     yt_parser.add_argument(
         "--merge",
@@ -179,14 +195,11 @@ Examples:
     add_common_args(yt_parser)
 
     # --- local subcommand ---
-    local_parser = subparsers.add_parser(
-        "local", help="Capture frames from local video files"
-    )
+    local_parser = subparsers.add_parser("local", help="Capture frames from local video files")
+    local_parser.add_argument("files", nargs="+", type=Path, help="Local video file(s)")
     local_parser.add_argument(
-        "files", nargs="+", type=Path, help="Local video file(s)"
-    )
-    local_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=Path,
         help="Output directory (default: current directory)",
     )
@@ -229,7 +242,8 @@ Examples:
         help="Disable fast keyframe-seeking",
     )
     local_parser.add_argument(
-        "-f", "--force",
+        "-f",
+        "--force",
         action="store_true",
         help="Overwrite existing output files",
     )
@@ -249,10 +263,16 @@ Examples:
         action="store_true",
         help="List embedded subtitle tracks and exit (no capture)",
     )
-    local_parser.add_argument(
+    local_post = local_parser.add_mutually_exclusive_group()
+    local_post.add_argument(
         "--transcribe",
         action="store_true",
-        help="Also transcribe captured frames with Claude Vision",
+        help="Also run full visual transcription on captured frames",
+    )
+    local_post.add_argument(
+        "--polish",
+        action="store_true",
+        help="Also polish captured caption text in place (text-only, no frames sent)",
     )
     local_parser.add_argument(
         "--merge",
@@ -264,18 +284,39 @@ Examples:
 
     # --- transcribe subcommand ---
     tx_parser = subparsers.add_parser(
-        "transcribe", help="Transcribe captured video frames with Claude Vision"
+        "transcribe",
+        help="Full visual transcription of captured frames with the configured model",
     )
+    tx_parser.add_argument("files", nargs="+", type=Path, help="Vidcapture markdown file(s)")
     tx_parser.add_argument(
-        "files", nargs="+", type=Path, help="Vidcapture markdown file(s)"
-    )
-    tx_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=Path,
         help="Output file path (auto-generated if omitted)",
     )
     _add_transcribe_args(tx_parser)
     add_common_args(tx_parser)
+
+    # --- polish subcommand ---
+    pol_parser = subparsers.add_parser(
+        "polish",
+        help=(
+            "Polish captured caption text with the configured model "
+            "(text-only; a single input is polished in place)"
+        ),
+    )
+    pol_parser.add_argument("files", nargs="+", type=Path, help="Vidcapture markdown file(s)")
+    pol_parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help=(
+            "Write a new file here instead of polishing in place "
+            "(multiple inputs always merge into a new file)"
+        ),
+    )
+    _add_transcribe_args(pol_parser, images=False)
+    add_common_args(pol_parser)
 
     return parser
 
@@ -312,10 +353,13 @@ def cmd_youtube(args: argparse.Namespace) -> int:
 
         all_results.append(result)
 
-    # If --transcribe, run transcription
+    # If --transcribe or --polish, run post-processing (mutually exclusive)
     if args.transcribe and captured_paths:
         tx_results = _transcribe_youtube_captures(args, captured_paths, errors)
         all_results.extend(tx_results)
+    elif args.polish and captured_paths:
+        pol_results = _polish_captures(args, captured_paths, errors)
+        all_results.extend(pol_results)
 
     # Build combined result
     success_count = sum(1 for r in all_results if r.success)
@@ -355,6 +399,7 @@ def _transcribe_youtube_captures(
                 title=args.title,
                 context_files=args.context_files,
                 model=args.model,
+                provider=args.provider,
                 batch_size=args.batch_size,
                 context_frames=args.context_frames,
                 temperature=args.temperature,
@@ -376,6 +421,7 @@ def _transcribe_youtube_captures(
                 title=args.title if len(captured_paths) == 1 else None,
                 context_files=args.context_files,
                 model=args.model,
+                provider=args.provider,
                 batch_size=args.batch_size,
                 context_frames=args.context_frames,
                 temperature=args.temperature,
@@ -388,6 +434,42 @@ def _transcribe_youtube_captures(
             if not result.success:
                 errors.append(result.message)
             results.append(result)
+
+    return results
+
+
+def _polish_captures(
+    args: argparse.Namespace,
+    captured_paths: list[Path],
+    errors: list[str],
+) -> list[OperationResult]:
+    """Run text-only caption polish on captured markdown files."""
+    from vidflow.transcribe import polish_markdown
+
+    results = []
+    input_groups = [captured_paths] if args.merge else [[p] for p in captured_paths]
+
+    # Each captured note is polished in place (output/title None); a
+    # merged run needs a new file, auto-named beside the first capture.
+    for paths in input_groups:
+        result = polish_markdown(
+            input_paths=paths,
+            output=None,
+            title=args.title if args.merge else None,
+            context_files=args.context_files,
+            model=args.model,
+            provider=args.provider,
+            batch_size=args.batch_size,
+            context_frames=args.context_frames,
+            temperature=args.temperature,
+            auto_confirm=args.yes,
+            dry_run=args.dry_run,
+            estimate_only=args.estimate_only,
+            json_output=args.json_output,
+        )
+        if not result.success:
+            errors.append(result.message)
+        results.append(result)
 
     return results
 
@@ -486,10 +568,13 @@ def cmd_local(args: argparse.Namespace) -> int:
 
         all_results.append(result)
 
-    # If --transcribe, run standard vidscribe transcription
+    # If --transcribe or --polish, run post-processing (mutually exclusive)
     if args.transcribe and captured_paths:
         tx_results = _transcribe_local_captures(args, captured_paths, errors)
         all_results.extend(tx_results)
+    elif args.polish and captured_paths:
+        pol_results = _polish_captures(args, captured_paths, errors)
+        all_results.extend(pol_results)
 
     # Build combined result
     success_count = sum(1 for r in all_results if r.success)
@@ -527,6 +612,7 @@ def _transcribe_local_captures(
             title=args.title,
             context_files=args.context_files,
             model=args.model,
+            provider=args.provider,
             batch_size=args.batch_size,
             context_frames=args.context_frames,
             temperature=args.temperature,
@@ -548,6 +634,7 @@ def _transcribe_local_captures(
                 title=args.title if len(captured_paths) == 1 else None,
                 context_files=args.context_files,
                 model=args.model,
+                provider=args.provider,
                 batch_size=args.batch_size,
                 context_frames=args.context_frames,
                 temperature=args.temperature,
@@ -579,10 +666,41 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         title=args.title,
         context_files=args.context_files,
         model=args.model,
+        provider=args.provider,
         batch_size=args.batch_size,
         context_frames=args.context_frames,
         temperature=args.temperature,
         max_dimension=args.max_dimension,
+        auto_confirm=args.yes,
+        dry_run=args.dry_run,
+        estimate_only=args.estimate_only,
+        json_output=args.json_output,
+    )
+
+    output_result(result, args.json_output, logger)
+    return ExitCode.SUCCESS if result.success else ExitCode.ERROR
+
+
+def cmd_polish(args: argparse.Namespace) -> int:
+    """Handle the polish subcommand.
+
+    A single input with no -o is polished in place; multiple inputs are
+    merged into a single new output file.
+    """
+    logger = setup_logging(args.verbose, args.quiet)
+
+    from vidflow.transcribe import polish_markdown
+
+    result = polish_markdown(
+        input_paths=args.files,
+        output=args.output,
+        title=args.title,
+        context_files=args.context_files,
+        model=args.model,
+        provider=args.provider,
+        batch_size=args.batch_size,
+        context_frames=args.context_frames,
+        temperature=args.temperature,
         auto_confirm=args.yes,
         dry_run=args.dry_run,
         estimate_only=args.estimate_only,
@@ -615,6 +733,7 @@ def main(argv: list[str] | None = None) -> int:
         "youtube": cmd_youtube,
         "local": cmd_local,
         "transcribe": cmd_transcribe,
+        "polish": cmd_polish,
     }
 
     handler = handlers.get(args.command)
