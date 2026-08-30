@@ -57,7 +57,7 @@ src/vidflow/
 │   ├── markdown.py          # Obsidian markdown generation
 │   ├── metadata.py          # VideoMetadataProtocol
 │   ├── titling.py           # AI title generation (local quick slot)
-│   ├── transcript.py        # YouTube transcript fetching
+│   ├── transcript.py        # Transcript fetching (API lane + yt-dlp fallback)
 │   ├── utils.py             # URL parsing, formatting
 │   ├── video.py             # yt-dlp wrapper
 │   └── data/                # Bash completion scripts
@@ -70,10 +70,7 @@ src/vidflow/
     ├── prompts.py            # Prompt constants, API config
     ├── image.py              # ImageMagick operations
     └── output.py             # Output path, sanitize, context loading
-tests/
-├── test_cli.py              # CLI entry point integration tests
-├── test_clipboard.py        # URL extraction and clipboard tests
-└── test_titling.py          # AI title generation tests
+tests/                       # pytest suite, one module per feature area
 ```
 
 ## Development
