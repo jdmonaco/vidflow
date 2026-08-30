@@ -28,14 +28,13 @@ from vidflow.capture.core import (
 )
 from vidflow.capture.frames import FrameExtractionError
 from vidflow.capture.local import LocalVideoError
-from vidflow.capture.utils import (
-    extract_youtube_urls,
-    is_playlist_url,
-    is_video_id,
-    is_video_url,
-    video_id_to_url,
+from vidflow.capture.transcript import TranscriptBlocked
+from vidflow.capture.utils import extract_youtube_urls, pace_bulk_requests
+from vidflow.capture.video import (
+    VideoError,
+    get_video_metadata,
+    normalize_video_urls,
 )
-from vidflow.capture.video import VideoError, expand_playlist, get_video_metadata
 
 # Load config at module level for CLI option defaults
 _cfg = get_config_for_defaults()
@@ -203,59 +202,32 @@ Examples:
 
     console.print(f"[dim]Output directory:[/] {shorten_path(str(output_dir))}/")
 
-    # 3. Classify and expand URLs (also accepts bare video IDs)
-    video_urls: list[str] = []
-    for url in url_list:
-        if is_video_id(url):
-            full_url = video_id_to_url(url)
-            console.print(f"[dim]Video ID:[/] {url} -> {full_url}")
-            video_urls.append(full_url)
-        elif is_playlist_url(url):
-            console.print(f"\n[dim]Expanding playlist:[/] {url}")
-            with console.status("[bold blue]Fetching playlist...", spinner="dots"):
-                try:
-                    playlist_videos = expand_playlist(url)
-                except VideoError as e:
-                    console.print(f"[red]x[/] Failed to expand playlist: {e}")
-                    continue
-            console.print(f"[green]+[/] Found {len(playlist_videos)} videos in playlist")
-            video_urls.extend(playlist_videos)
-        elif is_video_url(url):
-            video_urls.append(url)
-        else:
-            console.print(f"[yellow]![/] Skipping invalid URL: {url}")
+    # 3. Classify, expand, and deduplicate URLs (also accepts bare video IDs)
+    video_urls = normalize_video_urls(url_list, log=console.print)
 
     if not video_urls:
         parser.error("No valid video URLs found.")
 
-    # 4. Deduplicate video URLs
-    seen: set[str] = set()
-    unique_urls: list[str] = []
-    for url in video_urls:
-        if url not in seen:
-            seen.add(url)
-            unique_urls.append(url)
-    video_urls = unique_urls
-
-    # 5. Preview URLs
+    # 4. Preview URLs
     if len(video_urls) > 1 and not args.yes:
         if not preview_urls(video_urls, console, source="clipboard" if from_clipboard else "args"):
             parser.error("Cancelled by user.")
 
-    # 6. Confirm if >10 videos
+    # 5. Confirm if >10 videos
     if len(video_urls) > 10 and not args.yes:
         console.print(f"\n[bold]Found {len(video_urls)} videos to process.[/]")
         response = input("Continue? [Y/n]: ").strip().lower()
         if response not in ["y", "yes", ""]:
             parser.error("Cancelled by user.")
 
-    # 7. Process each video
+    # 6. Process each video
     console.print(f"\n[bold]Processing {len(video_urls)} video(s)...[/]\n")
 
     success_count = 0
     error_count = 0
 
     for i, video_url in enumerate(video_urls, 1):
+        pace_bulk_requests(i - 1, len(video_urls), log=lambda m: console.print(f"[dim]{m}[/]"))
         console.print(f"[bold blue][{i}/{len(video_urls)}][/] {video_url}")
         try:
             md_file = process_video(
@@ -273,11 +245,20 @@ Examples:
             )
             console.print(f"[green]+[/] {md_file.name}")
             success_count += 1
+        except TranscriptBlocked:
+            console.print(
+                "[red]x[/] ABORTED: YouTube is rate-limiting caption requests "
+                f"from this IP (blocked at video {i}/{len(video_urls)}). "
+                "Stopping all requests to avoid deepening the block; "
+                "retry later or via VPN."
+            )
+            error_count += 1
+            break
         except (VideoError, FrameExtractionError) as e:
             console.print(f"[red]x[/] Failed: {e}")
             error_count += 1
 
-    # 8. Summary
+    # 7. Summary
     if error_count > 0:
         console.print(
             f"\n[bold yellow]Complete![/] {success_count} succeeded, {error_count} failed"

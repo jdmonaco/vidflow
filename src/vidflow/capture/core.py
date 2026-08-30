@@ -19,7 +19,11 @@ from vidflow.capture.markdown import (
     generate_markdown_file,
     generate_markdown_filename,
 )
-from vidflow.capture.transcript import TranscriptSegment, get_transcript, save_transcript_json
+from vidflow.capture.transcript import (
+    TranscriptSegment,
+    get_transcript,
+    save_transcript_json,
+)
 from vidflow.capture.video import (
     VideoMetadata,
     download_video,
@@ -126,7 +130,9 @@ def process_video(
     videos_dir = output_dir / "videos"
     videos_dir.mkdir(exist_ok=True)
 
-    # 3. Get transcript
+    # 3. Get transcript. A blocked fetch (TranscriptBlocked) propagates and
+    # aborts the run before any further requests — no download, no next
+    # video — to avoid deepening the rate-limit block.
     with console.status("[bold blue]Fetching transcript...", spinner="dots"):
         transcript: list[TranscriptSegment] | None = get_transcript(
             metadata.video_id,

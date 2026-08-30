@@ -370,22 +370,45 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     if not urls:  # user declined the clipboard confirmation
         return ExitCode.SUCCESS
 
-    for url in urls:
-        from vidflow.capture import capture_youtube
+    # Normalize bare video IDs, expand playlist URLs, deduplicate
+    from vidflow.capture.video import normalize_video_urls
 
-        result = capture_youtube(
-            url=url,
-            output_dir=output_dir,
-            interval=args.interval,
-            max_frames=args.max_frames,
-            frame_format=args.frame_format,
-            language=args.language,
-            prefer_manual=args.prefer_manual,
-            dedup_threshold=args.dedup_threshold,
-            no_dedup=args.no_dedup,
-            keep_video=args.keep_video,
-            no_ai_title=args.no_ai_title,
-        )
+    urls = normalize_video_urls(urls, log=lambda msg: print(msg, file=sys.stderr))
+    if not urls:
+        print("No valid video URLs found.", file=sys.stderr)
+        return ExitCode.USAGE_ERROR
+
+    for i, url in enumerate(urls):
+        from vidflow.capture import capture_youtube
+        from vidflow.capture.transcript import TranscriptBlocked
+        from vidflow.capture.utils import pace_bulk_requests
+
+        pace_bulk_requests(i, len(urls), log=lambda msg: print(msg, file=sys.stderr))
+
+        try:
+            result = capture_youtube(
+                url=url,
+                output_dir=output_dir,
+                interval=args.interval,
+                max_frames=args.max_frames,
+                frame_format=args.frame_format,
+                language=args.language,
+                prefer_manual=args.prefer_manual,
+                dedup_threshold=args.dedup_threshold,
+                no_dedup=args.no_dedup,
+                keep_video=args.keep_video,
+                no_ai_title=args.no_ai_title,
+            )
+        except TranscriptBlocked:
+            msg = (
+                f"ABORTED: YouTube is rate-limiting caption requests from this "
+                f"IP (blocked at video {i + 1}/{len(urls)}). Stopping all "
+                "requests to avoid deepening the block; retry later or via VPN."
+            )
+            errors.append(msg)
+            if not args.json_output:
+                print(msg, file=sys.stderr)
+            break
 
         if result.success:
             captured_paths.append(Path(result.data["output_path"]))

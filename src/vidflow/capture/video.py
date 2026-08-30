@@ -49,6 +49,7 @@ def get_video_metadata(url: str) -> VideoMetadata:
         "yt-dlp",
         "--dump-json",
         "--skip-download",
+        "--no-playlist",
         "--no-warnings",
         "--remote-components",
         "ejs:github",
@@ -104,6 +105,7 @@ def get_stream_url(url: str) -> str:
         "--format",
         format_spec,
         "--get-url",
+        "--no-playlist",
         "--no-warnings",
         "--remote-components",
         "ejs:github",
@@ -143,6 +145,7 @@ def download_video(url: str, output_dir: Path) -> Path:
         format_spec,
         "--output",
         output_template,
+        "--no-playlist",
         "--no-warnings",
         "--remote-components",
         "ejs:github",
@@ -187,6 +190,59 @@ def download_video(url: str, output_dir: Path) -> Path:
         raise
     except Exception as e:
         raise VideoError(f"Unexpected error downloading video: {e}") from e
+
+
+def normalize_video_urls(urls: list[str], log=None) -> list[str]:
+    """Classify and expand capture inputs into unique video watch URLs.
+
+    Accepts bare video IDs (normalized to watch URLs), playlist URLs
+    (expanded via yt-dlp), and plain video URLs; anything else is skipped
+    with a note. Duplicates are dropped, order preserved. Watch URLs that
+    also carry a list= parameter pass through unchanged — the single-video
+    yt-dlp calls pin them with --no-playlist. `log` receives plain-text
+    progress messages when provided.
+
+    Shared by the ytcapture standalone CLI and vidflow youtube, including
+    both clipboard fallbacks.
+    """
+    from vidflow.capture.utils import (
+        is_playlist_url,
+        is_video_id,
+        is_video_url,
+        video_id_to_url,
+    )
+
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+
+    video_urls: list[str] = []
+    for url in urls:
+        if is_video_id(url):
+            full_url = video_id_to_url(url)
+            _log(f"Video ID: {url} -> {full_url}")
+            video_urls.append(full_url)
+        elif is_playlist_url(url):
+            _log(f"Expanding playlist: {url}")
+            try:
+                playlist_videos = expand_playlist(url)
+            except VideoError as e:
+                _log(f"! Failed to expand playlist: {e}")
+                continue
+            _log(f"+ Found {len(playlist_videos)} videos in playlist")
+            video_urls.extend(playlist_videos)
+        elif is_video_url(url):
+            video_urls.append(url)
+        else:
+            _log(f"! Skipping invalid URL: {url}")
+
+    seen: set[str] = set()
+    unique_urls: list[str] = []
+    for url in video_urls:
+        if url not in seen:
+            seen.add(url)
+            unique_urls.append(url)
+    return unique_urls
 
 
 def expand_playlist(url: str) -> list[str]:

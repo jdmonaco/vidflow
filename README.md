@@ -40,6 +40,10 @@ vidflow youtube URL --polish
 
 # Multiple videos (always independent — one note per video)
 vidflow youtube URL1 URL2 --transcribe
+
+# Playlist URLs expand to their videos (one note per video);
+# watch URLs carrying a &list= param capture just that video
+vidflow youtube "https://www.youtube.com/playlist?list=PLAYLIST_ID"
 ```
 
 ### Local video capture
@@ -170,4 +174,4 @@ Polish reuses the same processor, batching, retry, and continuity machinery as t
 
 ## Version
 
-0.4.0
+0.4.2
