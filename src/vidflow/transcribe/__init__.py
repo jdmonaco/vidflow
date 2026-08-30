@@ -183,7 +183,10 @@ def transcribe_markdown(
 
         fm_yaml = yaml.dump(frontmatter_data, default_flow_style=False, sort_keys=False).strip()
         final_md = f"---\n{fm_yaml}\n---\n\n"
-        final_md += f"# {title}\n\n"
+        # Merged outputs carry an H1 per original file in the transcript
+        # body; the overall title lives in frontmatter only
+        if len(input_paths) == 1:
+            final_md += f"# {title}\n\n"
         final_md += transcript_text
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,7 +347,9 @@ def polish_markdown(
 
             fm_yaml = yaml.dump(frontmatter_data, default_flow_style=False, sort_keys=False).strip()
             final_md = f"---\n{fm_yaml}\n---\n\n"
-            final_md += f"# {title}\n\n"
+            # Merged outputs carry an H1 per original file in the body
+            if len(input_paths) == 1:
+                final_md += f"# {title}\n\n"
             final_md += transcript_text
 
             output_path.parent.mkdir(parents=True, exist_ok=True)

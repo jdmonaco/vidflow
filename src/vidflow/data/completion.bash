@@ -96,7 +96,7 @@ _vidflow_completions() {
         local opts=""
         case "$subcmd" in
             youtube)
-                opts="-o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title --transcribe --polish --merge $transcribe_flags $common_flags"
+                opts="-o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title --transcribe --polish $transcribe_flags $common_flags"
                 ;;
             local)
                 opts="-o --output --interval --max-frames --frame-format --dedup-threshold --no-dedup --fast --no-fast -f --force --no-subtitles --subtitle-track --list-subtitles --transcribe --polish --merge $transcribe_flags $common_flags"

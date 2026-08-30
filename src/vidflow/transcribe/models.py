@@ -14,6 +14,8 @@ class TimestampSection:
     image_path: Path  # Resolved absolute path
     existing_text: str = ""  # Pre-existing transcript text (e.g., YouTube auto-captions)
     content: str = ""  # Filled transcript
+    part_index: int = 0  # Source document index in a merged run
+    part_title: str = ""  # Source document title (merged runs only)
 
 
 @dataclass

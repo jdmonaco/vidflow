@@ -889,8 +889,23 @@ class VidscribeProcessor:
                     if not valid_sections:
                         raise RuntimeError("No valid sections with existing images found")
 
-                # Process in batches
-                total_batches = (len(valid_sections) + self.batch_size - 1) // self.batch_size
+                # Process in batches that never straddle part boundaries:
+                # timestamps restart per merged part, so keeping each batch
+                # within one part keeps `## HH:MM:SS` headings unique in the
+                # template and response, and keeps continuity context from
+                # leaking across unrelated recordings.
+                batches: List[List[TimestampSection]] = []
+                prev_part: Optional[int] = None
+                for section in valid_sections:
+                    if (
+                        not batches
+                        or section.part_index != prev_part
+                        or len(batches[-1]) >= self.batch_size
+                    ):
+                        batches.append([])
+                    batches[-1].append(section)
+                    prev_part = section.part_index
+                total_batches = len(batches)
 
                 filled_sections = []
                 start_batch = 0
@@ -899,28 +914,39 @@ class VidscribeProcessor:
                 if checkpoint_path and input_paths:
                     ckpt = self._load_checkpoint(checkpoint_path, input_paths)
                     if ckpt:
-                        start_batch = ckpt["completed_batches"]
-                        # Restore filled sections from checkpoint
-                        for s_data in ckpt["sections"]:
-                            for vs in valid_sections:
-                                if vs.timestamp == s_data["timestamp"]:
-                                    vs.content = s_data["content"]
-                                    filled_sections.append(vs)
-                                    break
-                        self.console.print(
-                            f"[bold green]Resuming from checkpoint "
-                            f"({start_batch}/{total_batches} batches completed)[/bold green]"
-                        )
+                        # Restore filled sections in processing order; merged
+                        # parts repeat timestamps, so positional restore with a
+                        # sanity check replaces timestamp lookup
+                        restored = ckpt["sections"]
+                        if all(
+                            vs.timestamp == s_data["timestamp"]
+                            for vs, s_data in zip(valid_sections, restored)
+                        ):
+                            start_batch = ckpt["completed_batches"]
+                            for vs, s_data in zip(valid_sections, restored):
+                                vs.content = s_data["content"]
+                                filled_sections.append(vs)
+                            self.console.print(
+                                f"[bold green]Resuming from checkpoint "
+                                f"({start_batch}/{total_batches} batches completed)[/bold green]"
+                            )
+                        else:
+                            self.console.print(
+                                "[yellow]Checkpoint does not match inputs; starting fresh[/yellow]"
+                            )
 
                 for batch_num in range(start_batch, total_batches):
-                    start_idx = batch_num * self.batch_size
-                    end_idx = min(start_idx + self.batch_size, len(valid_sections))
-                    batch = valid_sections[start_idx:end_idx]
+                    batch = batches[batch_num]
 
-                    # Build context from previous filled sections
+                    # Build context from previous filled sections of the SAME
+                    # part; a new part starts with no continuity context
                     context_sections = []
                     if filled_sections and self.context_frames > 0:
-                        context_sections = filled_sections[-self.context_frames :]
+                        context_sections = [
+                            s
+                            for s in filled_sections[-self.context_frames :]
+                            if s.part_index == batch[0].part_index
+                        ]
 
                     # Process batch
                     self.console.print(
@@ -957,9 +983,17 @@ class VidscribeProcessor:
                             len(valid_sections),
                         )
 
-                # Build the full transcript
+                # Build the full transcript. A merged run emits an H1 per
+                # original file, with H2 timestamps restarting under each.
+                multi_part = len({s.part_index for s in filled_sections}) > 1
                 transcript_lines = []
+                heading_part: Optional[int] = None
                 for section in filled_sections:
+                    if multi_part and section.part_index != heading_part:
+                        part_title = section.part_title or f"Part {section.part_index + 1}"
+                        transcript_lines.append(f"# {part_title}")
+                        transcript_lines.append("")
+                        heading_part = section.part_index
                     transcript_lines.append(f"## {section.timestamp}")
                     transcript_lines.append(section.image_embed)
                     if section.content:

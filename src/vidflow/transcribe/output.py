@@ -1,5 +1,6 @@
 """Output path determination and file utilities."""
 
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -10,13 +11,13 @@ def shorten_path(path: str) -> str:
     home = str(Path.home())
     onedrive_prefix = f"{home}/Library/CloudStorage/OneDrive-"
     if path.startswith(onedrive_prefix):
-        rest = path[len(onedrive_prefix):]
+        rest = path[len(onedrive_prefix) :]
         if "/" in rest:
             _, subpath = rest.split("/", 1)
             return f"~/OneDrive/{subpath}"
         return f"~/OneDrive/{rest}"
     if path.startswith(home + "/"):
-        return "~" + path[len(home):]
+        return "~" + path[len(home) :]
     elif path == home:
         return "~"
     return path
@@ -54,9 +55,7 @@ def handle_existing_output(output_path: Path, input_dir: Path) -> Optional[Path]
     """
     while True:
         response = (
-            input(f"\nFile exists: {output_path.name}\nOverwrite? [y/N/r(ename)]: ")
-            .strip()
-            .lower()
+            input(f"\nFile exists: {output_path.name}\nOverwrite? [y/N/r(ename)]: ").strip().lower()
         )
         if response in ["y", "yes"]:
             return output_path
@@ -80,14 +79,19 @@ def determine_output_path(
     Args:
         input_path: Original vidcapture markdown file path
         title: Generated or provided title
-        explicit_output: User-provided output path (overrides auto-generation)
-
+        explicit_output: User-provided output path — either a file path, or
+            an existing directory (or a path with a trailing separator) that
+            receives the auto-named file
     Returns:
         Path for the output file
     """
+    sanitized = sanitize_filename(title)
+
     if explicit_output:
-        return explicit_output.resolve()
+        resolved = explicit_output.resolve()
+        if resolved.is_dir() or str(explicit_output).endswith(os.sep):
+            return resolved / f"{sanitized}.md"
+        return resolved
 
     # Auto-generate from title in same directory as input
-    sanitized = sanitize_filename(title)
     return (input_path.parent / f"{sanitized}.md").resolve()

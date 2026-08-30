@@ -372,9 +372,13 @@ Examples:
         if args.verbose:
             log(f"Using user-provided title: {args.title}")
 
-    # Build complete document
+    # Build complete document; merged outputs carry an H1 per original
+    # file in the transcript body, so the overall H1 is single-input only
     frontmatter_yaml = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
-    full_document = f"---\n{frontmatter_yaml}---\n\n# {frontmatter['title']}\n\n{transcript}"
+    full_document = f"---\n{frontmatter_yaml}---\n\n"
+    if len(args.inputs) == 1:
+        full_document += f"# {frontmatter['title']}\n\n"
+    full_document += transcript
 
     # Determine output path
     output_path = determine_output_path(args.inputs[0], frontmatter["title"], args.output)

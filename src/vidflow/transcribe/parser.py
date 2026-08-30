@@ -82,7 +82,7 @@ def parse_vidcapture_markdown(path: Path) -> VidcaptureDocument:
     frontmatter_match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
     if frontmatter_match:
         frontmatter = frontmatter_match.group(1)
-        body = content[frontmatter_match.end():]
+        body = content[frontmatter_match.end() :]
 
         # Try to extract title from frontmatter
         try:
@@ -128,7 +128,7 @@ def parse_vidcapture_markdown(path: Path) -> VidcaptureDocument:
             image_path = resolve_image_path(path, relative_path)
 
             # Capture any text after the image embed as existing transcript
-            after_image = section_content[image_match.end():].strip()
+            after_image = section_content[image_match.end() :].strip()
 
             sections.append(
                 TimestampSection(
@@ -158,15 +158,22 @@ def merge_vidcapture_documents(
 ) -> VidcaptureDocument:
     """Merge multiple vidcapture documents into one.
 
-    Concatenates sections in order. Uses first document's source_path for output directory.
+    Concatenates sections in order, tagging each with its source part
+    (index and title) so processing can keep parts separate — timestamps
+    restart per part — and the merged output can emit an H1 heading per
+    original file. Uses first document's source_path for output directory.
     Title is left empty for auto-generation based on full content.
     """
     if len(documents) == 1:
         return documents[0]
 
     all_sections = []
-    for doc in documents:
-        all_sections.extend(doc.sections)
+    for part_index, doc in enumerate(documents):
+        part_title = doc.title or doc.source_path.stem
+        for section in doc.sections:
+            section.part_index = part_index
+            section.part_title = part_title
+            all_sections.append(section)
 
     return VidcaptureDocument(
         source_path=documents[0].source_path,  # For output directory

@@ -105,11 +105,12 @@ Anthropic API as the quality escape hatch.
 
 Examples:
   vidflow youtube https://youtube.com/watch?v=...
+  vidflow youtube                 (no URLs: read from clipboard on macOS)
   vidflow youtube URL1 URL2 --transcribe
   vidflow youtube URL --polish
-  vidflow youtube URL --transcribe --merge -m claude-opus-5
+  vidflow youtube URL --transcribe -m claude-opus-5
   vidflow local recording.mp4 --transcribe
-  vidflow local *.mp4 --merge --transcribe
+  vidflow local part1.mp4 part2.mp4 --merge --transcribe
   vidflow transcribe part1.md part2.md -o combined.md
   vidflow polish capture.md
 """,
@@ -120,7 +121,11 @@ Examples:
 
     # --- youtube subcommand ---
     yt_parser = subparsers.add_parser("youtube", help="Capture frames from YouTube videos")
-    yt_parser.add_argument("urls", nargs="+", help="YouTube video URL(s)")
+    yt_parser.add_argument(
+        "urls",
+        nargs="*",
+        help="YouTube video URL(s) (default: read from clipboard on macOS)",
+    )
     yt_parser.add_argument(
         "-o",
         "--output",
@@ -185,11 +190,6 @@ Examples:
         "--polish",
         action="store_true",
         help="Also polish captured caption text in place (text-only, no frames sent)",
-    )
-    yt_parser.add_argument(
-        "--merge",
-        action="store_true",
-        help="Merge multiple URLs into a single output",
     )
     _add_transcribe_args(yt_parser)
     add_common_args(yt_parser)
@@ -292,7 +292,7 @@ Examples:
         "-o",
         "--output",
         type=Path,
-        help="Output file path (auto-generated if omitted)",
+        help="Output file, or directory for an auto-named file (default: beside input)",
     )
     _add_transcribe_args(tx_parser)
     add_common_args(tx_parser)
@@ -311,14 +311,49 @@ Examples:
         "--output",
         type=Path,
         help=(
-            "Write a new file here instead of polishing in place "
-            "(multiple inputs always merge into a new file)"
+            "Write a new file (or into a directory) instead of polishing "
+            "in place (multiple inputs always merge into a new file)"
         ),
     )
     _add_transcribe_args(pol_parser, images=False)
     add_common_args(pol_parser)
 
     return parser
+
+
+def _resolve_youtube_urls(args: argparse.Namespace) -> list[str] | None:
+    """Resolve capture URLs from arguments or, failing that, the clipboard.
+
+    Returns None when no URLs are available (usage error) and an empty
+    list when the user declines the clipboard confirmation prompt.
+    """
+    if args.urls:
+        return args.urls
+
+    from vidflow.capture.cli import get_clipboard_urls
+
+    urls = get_clipboard_urls()
+    if not urls:
+        print(
+            "No URLs provided and no YouTube URLs found in clipboard. "
+            "Pass URLs as arguments or copy one to the clipboard.",
+            file=sys.stderr,
+        )
+        return None
+
+    print(f"Using {len(urls)} YouTube URL(s) from clipboard:", file=sys.stderr)
+    for url in urls:
+        print(f"  {url}", file=sys.stderr)
+
+    # Confirm before downloading from a possibly stale clipboard, but only
+    # when interactive; -y/--yes and --json skip the prompt
+    if sys.stdin.isatty() and not args.yes and not args.json_output:
+        response = input("Proceed with capture? [Y/n]: ").strip().lower()
+        if response not in ("", "y", "yes"):
+            print("Cancelled.", file=sys.stderr)
+            return []
+
+    return urls
 
 
 def cmd_youtube(args: argparse.Namespace) -> int:
@@ -329,7 +364,13 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     all_results = []
     captured_paths = []
 
-    for url in args.urls:
+    urls = _resolve_youtube_urls(args)
+    if urls is None:
+        return ExitCode.USAGE_ERROR
+    if not urls:  # user declined the clipboard confirmation
+        return ExitCode.SUCCESS
+
+    for url in urls:
         from vidflow.capture import capture_youtube
 
         result = capture_youtube(
@@ -365,7 +406,7 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     success_count = sum(1 for r in all_results if r.success)
     total = len(all_results)
 
-    if len(args.urls) == 1 and len(all_results) == 1:
+    if len(urls) == 1 and len(all_results) == 1:
         combined = all_results[0]
     else:
         combined = OperationResult(
@@ -384,56 +425,36 @@ def _transcribe_youtube_captures(
     captured_paths: list[Path],
     errors: list[str],
 ) -> list[OperationResult]:
-    """Run YouTube-aware transcription on captured markdown files."""
+    """Run YouTube-aware transcription on captured markdown files.
+
+    Each capture is transcribed independently; merging is a local-video
+    concern (stitching one long event) and not offered on the youtube path.
+    """
     from vidflow.youtube import transcribe_youtube
 
     results = []
+    single = len(captured_paths) == 1
 
-    if args.merge:
-        # TODO: Merged YouTube transcription for multi-part content
-        # For now, process sequentially and note this as future work
-        for path in captured_paths:
-            result = transcribe_youtube(
-                input_path=path,
-                output=args.output,
-                title=args.title,
-                context_files=args.context_files,
-                model=args.model,
-                provider=args.provider,
-                batch_size=args.batch_size,
-                context_frames=args.context_frames,
-                temperature=args.temperature,
-                max_dimension=args.max_dimension,
-                auto_confirm=args.yes,
-                dry_run=args.dry_run,
-                estimate_only=args.estimate_only,
-                json_output=args.json_output,
-            )
-            if not result.success:
-                errors.append(result.message)
-            results.append(result)
-    else:
-        # Independent processing (default)
-        for path in captured_paths:
-            result = transcribe_youtube(
-                input_path=path,
-                output=args.output if len(captured_paths) == 1 else None,
-                title=args.title if len(captured_paths) == 1 else None,
-                context_files=args.context_files,
-                model=args.model,
-                provider=args.provider,
-                batch_size=args.batch_size,
-                context_frames=args.context_frames,
-                temperature=args.temperature,
-                max_dimension=args.max_dimension,
-                auto_confirm=args.yes,
-                dry_run=args.dry_run,
-                estimate_only=args.estimate_only,
-                json_output=args.json_output,
-            )
-            if not result.success:
-                errors.append(result.message)
-            results.append(result)
+    for path in captured_paths:
+        result = transcribe_youtube(
+            input_path=path,
+            output=args.output if single else None,
+            title=args.title if single else None,
+            context_files=args.context_files,
+            model=args.model,
+            provider=args.provider,
+            batch_size=args.batch_size,
+            context_frames=args.context_frames,
+            temperature=args.temperature,
+            max_dimension=args.max_dimension,
+            auto_confirm=args.yes,
+            dry_run=args.dry_run,
+            estimate_only=args.estimate_only,
+            json_output=args.json_output,
+        )
+        if not result.success:
+            errors.append(result.message)
+        results.append(result)
 
     return results
 
@@ -447,7 +468,9 @@ def _polish_captures(
     from vidflow.transcribe import polish_markdown
 
     results = []
-    input_groups = [captured_paths] if args.merge else [[p] for p in captured_paths]
+    # --merge exists only on the local subcommand (stitching a long event)
+    merge = getattr(args, "merge", False)
+    input_groups = [captured_paths] if merge else [[p] for p in captured_paths]
 
     # Each captured note is polished in place (output/title None); a
     # merged run needs a new file, auto-named beside the first capture.
@@ -455,7 +478,7 @@ def _polish_captures(
         result = polish_markdown(
             input_paths=paths,
             output=None,
-            title=args.title if args.merge else None,
+            title=args.title if merge else None,
             context_files=args.context_files,
             model=args.model,
             provider=args.provider,

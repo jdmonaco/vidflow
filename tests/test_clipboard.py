@@ -11,10 +11,7 @@ class TestExtractYoutubeUrls:
     """Tests for extract_youtube_urls()."""
 
     def test_plain_urls(self):
-        text = (
-            "https://www.youtube.com/watch?v=abc123\n"
-            "https://youtu.be/def456\n"
-        )
+        text = "https://www.youtube.com/watch?v=abc123\n" "https://youtu.be/def456\n"
         result = extract_youtube_urls(text)
         assert result == [
             "https://www.youtube.com/watch?v=abc123",
@@ -122,10 +119,7 @@ class TestGetClipboardUrls:
         from vidflow.capture.cli import get_clipboard_urls
 
         mock_run.return_value = MagicMock(
-            stdout=(
-                "https://www.youtube.com/watch?v=abc123\n"
-                "https://youtu.be/def456\n"
-            ),
+            stdout=("https://www.youtube.com/watch?v=abc123\n" "https://youtu.be/def456\n"),
         )
         result = get_clipboard_urls()
         assert result == [
@@ -198,9 +192,7 @@ class TestPreviewUrls:
             duration=120.0,
         )
         con = Console(quiet=True)
-        result = preview_urls(
-            ["https://www.youtube.com/watch?v=abc123"], con, source="clipboard"
-        )
+        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="clipboard")
         assert result is True
 
     @patch("builtins.input", return_value="n")
@@ -220,9 +212,7 @@ class TestPreviewUrls:
             duration=120.0,
         )
         con = Console(quiet=True)
-        result = preview_urls(
-            ["https://www.youtube.com/watch?v=abc123"], con, source="clipboard"
-        )
+        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="clipboard")
         assert result is False
 
     @patch("builtins.input", return_value="y")
@@ -235,9 +225,7 @@ class TestPreviewUrls:
 
         mock_metadata.side_effect = VideoError("not found")
         con = Console(quiet=True)
-        result = preview_urls(
-            ["https://www.youtube.com/watch?v=abc123"], con, source="clipboard"
-        )
+        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="clipboard")
         assert result is True
 
     @patch("builtins.input", return_value="y")
@@ -282,7 +270,65 @@ class TestPreviewUrls:
             duration=120.0,
         )
         con = Console(quiet=True)
-        result = preview_urls(
-            ["https://www.youtube.com/watch?v=abc123"], con, source="args"
-        )
+        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="args")
         assert result is True
+
+
+class TestVidflowClipboardFallback:
+    """Tests for the unified CLI's clipboard fallback (vidflow youtube)."""
+
+    URL = "https://www.youtube.com/watch?v=abc123"
+
+    def _capture_result(self):
+        from vidflow.cli_common import OperationResult
+
+        return OperationResult(
+            success=True,
+            message="Captured",
+            data={"output_path": "/tmp/fake.md"},
+        )
+
+    @patch("vidflow.capture.cli.get_clipboard_urls", return_value=[])
+    def test_no_args_no_clipboard_is_usage_error(self, mock_clip):
+        from vidflow.cli import main as vidflow_main
+
+        assert vidflow_main(["youtube"]) == 2
+        mock_clip.assert_called_once()
+
+    @patch("vidflow.capture.capture_youtube")
+    @patch("vidflow.capture.cli.get_clipboard_urls")
+    def test_clipboard_urls_are_captured(self, mock_clip, mock_capture):
+        from vidflow.cli import main as vidflow_main
+
+        mock_clip.return_value = [self.URL]
+        mock_capture.return_value = self._capture_result()
+
+        # Non-TTY stdin under pytest, so no confirmation prompt fires
+        assert vidflow_main(["youtube"]) == 0
+        assert mock_capture.call_args.kwargs["url"] == self.URL
+
+    @patch("vidflow.capture.capture_youtube")
+    @patch("vidflow.capture.cli.get_clipboard_urls")
+    def test_explicit_args_skip_clipboard(self, mock_clip, mock_capture):
+        from vidflow.cli import main as vidflow_main
+
+        mock_capture.return_value = self._capture_result()
+
+        assert vidflow_main(["youtube", self.URL]) == 0
+        mock_clip.assert_not_called()
+
+    @patch("vidflow.capture.capture_youtube")
+    @patch("vidflow.capture.cli.get_clipboard_urls")
+    def test_declined_confirmation_cancels(self, mock_clip, mock_capture, monkeypatch):
+        import io
+
+        from vidflow.cli import main as vidflow_main
+
+        mock_clip.return_value = [self.URL]
+        fake_stdin = io.StringIO()
+        fake_stdin.isatty = lambda: True
+        monkeypatch.setattr("sys.stdin", fake_stdin)
+        monkeypatch.setattr("builtins.input", lambda *a: "n")
+
+        assert vidflow_main(["youtube"]) == 0
+        mock_capture.assert_not_called()

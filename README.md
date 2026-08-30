@@ -28,17 +28,18 @@ vidflow youtube https://youtube.com/watch?v=VIDEO_ID
 # Bare video IDs also work
 ytcapture dQw4w9WgXcQ
 
+# No arguments: YouTube URLs are read from the clipboard (macOS),
+# listed, and confirmed before capture (-y skips the prompt)
+vidflow youtube
+
 # Capture + full visual transcription in one step
 vidflow youtube URL --transcribe
 
 # Capture + text-only caption polish (cheaper: no frames sent)
 vidflow youtube URL --polish
 
-# Multiple videos
+# Multiple videos (always independent — one note per video)
 vidflow youtube URL1 URL2 --transcribe
-
-# Multiple videos, merged into one transcript
-vidflow youtube URL1 URL2 --transcribe --merge
 ```
 
 ### Local video capture
@@ -159,12 +160,14 @@ Polish reuses the same processor, batching, retry, and continuity machinery as t
 
 | Command | Default | With `--merge` |
 |---------|---------|----------------|
-| `youtube URL1 URL2` | Independent (2 outputs) | Merged (1 output) |
+| `youtube URL1 URL2` | Independent (2 outputs) | — (no merge; one note per video) |
 | `local f1.mp4 f2.mp4` | Independent (2 outputs) | Merged (1 output) |
 | `transcribe f1.md f2.md` | Merged (1 output) | N/A (always merged) |
 | `polish f1.md` | In-place update | — |
 | `polish f1.md f2.md` | Merged (1 new output) | N/A (always merged) |
 
+`--merge` exists for stitching one long event (e.g., a workshop recorded as several local files) into a single note. A merged output keeps each source file as its own section: an H1 heading per original file (its title), with H2 timestamp headings restarting under each. The overall generated title lives in the frontmatter only. Parts are processed in separate batches with continuity context reset at each boundary, so transcription never bleeds across recordings.
+
 ## Version
 
-0.3.0
+0.4.0
