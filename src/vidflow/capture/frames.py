@@ -1,5 +1,7 @@
 """Frame extraction from local video files using ffmpeg."""
 
+import functools
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +28,33 @@ class FrameExtractionError(Exception):
 def check_ffmpeg() -> bool:
     """Check if ffmpeg is available in PATH."""
     return shutil.which('ffmpeg') is not None
+
+
+@functools.lru_cache(maxsize=1)
+def ffmpeg_version() -> tuple[int, int]:
+    """Return the installed ffmpeg (major, minor) version, (0, 0) if unknown."""
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-version'], capture_output=True, text=True, timeout=10
+        )
+        match = re.search(r'ffmpeg version n?(\d+)\.(\d+)', result.stdout)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    except Exception:
+        pass
+    return (0, 0)
+
+
+def vfr_output_args() -> list[str]:
+    """Return the variable-frame-rate output flag for the installed ffmpeg.
+
+    ffmpeg 5.1 replaced -vsync with -fps_mode, and ffmpeg 9 removed -vsync
+    outright. Older installs (e.g. Ubuntu 22.04's 4.4) only know -vsync.
+    An unparseable version defaults to the modern flag.
+    """
+    if ffmpeg_version() >= (5, 1) or ffmpeg_version() == (0, 0):
+        return ['-fps_mode', 'vfr']
+    return ['-vsync', 'vfr']
 
 
 def compute_phash(image_path: Path) -> imagehash.ImageHash:
@@ -159,7 +188,7 @@ def extract_frames_from_file(
             cmd.extend(['-vf', ','.join(vf_parts)])
 
         cmd.extend([
-            '-vsync', 'vfr',
+            *vfr_output_args(),
             '-frame_pts', '1',
             str(temp_pattern),
         ])
