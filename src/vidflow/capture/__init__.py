@@ -41,13 +41,16 @@ def capture_youtube(
     no_dedup: bool = False,
     keep_video: bool = False,
     no_ai_title: bool = False,
+    force: bool = False,
 ):
     """Capture YouTube video with OperationResult output.
 
     Wraps process_video() for use by the vidflow CLI layer.
     TranscriptBlocked and VideoBlocked propagate so the caller can abort
-    the whole run.
+    the whole run. An already-captured video yields a successful result
+    flagged ``skipped`` so callers can leave it out of post-processing.
     """
+    from vidflow.capture.core import CaptureExists
     from vidflow.capture.transcript import TranscriptBlocked
     from vidflow.capture.video import VideoBlocked
     from vidflow.cli_common import OperationResult
@@ -65,11 +68,18 @@ def capture_youtube(
             no_dedup=no_dedup,
             keep_video=keep_video,
             no_ai_title=no_ai_title,
+            force=force,
         )
         return OperationResult(
             success=True,
             message=f"Captured YouTube video to {md_path}",
-            data={"output_path": str(md_path)},
+            data={"output_path": str(md_path), "skipped": False},
+        )
+    except CaptureExists as e:
+        return OperationResult(
+            success=True,
+            message=f"Skipped (already captured): {e.path}",
+            data={"output_path": str(e.path), "skipped": True},
         )
     except (TranscriptBlocked, VideoBlocked):
         raise

@@ -1,16 +1,16 @@
-"""Transcript fetching and parsing.
+"""Transcript selection and parsing.
 
-Two lanes: youtube-transcript-api (primary — fast, no full page
-extraction) and yt-dlp subtitle extraction (fallback). YouTube blocks the
-transcript API's raw caption endpoint for some videos — podcast-classified
-and auto-dubbed uploads consistently, arbitrary IPs intermittently — while
-yt-dlp's full extractor still reaches the same captions.
+Two lanes: json3 caption files that yt-dlp wrote alongside the video
+download (primary — no extra request, see ``fetch_video``) and
+youtube-transcript-api (fallback, paced). YouTube blocks the transcript
+API's raw caption endpoint for some videos — podcast-classified and
+auto-dubbed uploads consistently, arbitrary IPs intermittently — while
+yt-dlp's full extractor still reaches the same captions, which is one
+more reason the download's captions come first.
 """
 
 import json
 import random
-import subprocess
-import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -21,8 +21,6 @@ from youtube_transcript_api import (
     TranscriptsDisabled,
     YouTubeTranscriptApi,
 )
-
-from vidflow.capture.video import is_bot_gate
 
 
 @dataclass
@@ -97,49 +95,86 @@ def pace_caption_request(log=None, span: tuple[float, float] = PACE_SPAN) -> flo
     return slept
 
 
+def transcript_from_caption_files(
+    caption_files: list[Path],
+    video_id: str,
+    language: str = "en",
+    prefer_manual: bool = True,
+    manual_langs: frozenset[str] = frozenset(),
+) -> list[TranscriptSegment] | None:
+    """Pick and parse the best json3 caption file yt-dlp wrote for a video.
+
+    Files are named ``<video_id>.<lang>.json3``. The exact language match
+    wins over variants (e.g. en-orig on auto-dubbed videos); with
+    ``prefer_manual`` languages listed in ``manual_langs`` are tried first.
+    Returns None when no file yields segments.
+    """
+    prefix = f"{video_id}."
+
+    def lang_of(path: Path) -> str:
+        return path.name[len(prefix) : -len(".json3")]
+
+    candidates = [f for f in caption_files if f.name.startswith(prefix) and f.suffix == ".json3"]
+    candidates.sort(
+        key=lambda f: (
+            prefer_manual and lang_of(f) not in manual_langs,
+            lang_of(f) != language,
+            f.name,
+        )
+    )
+    for caption_file in candidates:
+        try:
+            segments = parse_json3_captions(caption_file)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if segments:
+            return segments
+    return None
+
+
 def get_transcript(
     video_id: str,
     language: str = "en",
     prefer_manual: bool = True,
     log=None,
+    caption_files: list[Path] | None = None,
+    manual_langs: frozenset[str] = frozenset(),
+    captions_blocked: bool = False,
 ) -> list[TranscriptSegment] | None:
-    """Fetch transcript for a YouTube video, falling back to yt-dlp.
+    """Resolve a video's transcript: downloaded captions first, then the API.
 
-    Returns None when no transcript exists; raises TranscriptBlocked when
-    YouTube is rate-limiting caption requests from this IP (sticky for the
-    rest of the process, so bulk runs fail fast after the first block).
-    Consecutive calls are paced (see pace_caption_request); ``log`` receives
-    the pacing notice when a sleep is needed.
+    ``caption_files`` are the json3 files from ``fetch_video``; when one
+    parses, no further request is made. Otherwise the transcript API lane
+    runs, paced against the previous API request (see
+    pace_caption_request; ``log`` receives the pacing notice). Returns
+    None when no transcript exists. Raises TranscriptBlocked when YouTube
+    is rate-limiting caption requests — either the download's caption
+    fetch saw a 429 (``captions_blocked``) or the API lane was refused.
+    The block is sticky for the rest of the process so bulk runs fail
+    fast after the first one.
     """
     global _block_detected
     if _block_detected:
         raise TranscriptBlocked("caption requests from this IP are rate-limited")
 
-    pace_caption_request(log=log)
+    if caption_files:
+        segments = transcript_from_caption_files(
+            caption_files, video_id, language, prefer_manual, manual_langs
+        )
+        if segments:
+            return segments
 
-    api_blocked = False
+    if captions_blocked:
+        _block_detected = True
+        raise TranscriptBlocked("YouTube returned 429 (Too Many Requests) for caption downloads")
+
+    pace_caption_request(log=log)
     try:
         segments = get_transcript_api(video_id, language, prefer_manual)
     except TranscriptBlocked:
-        api_blocked = True
-        segments = None
-    if segments:
-        return segments
-
-    try:
-        segments = get_transcript_ytdlp(video_id, language, prefer_manual)
-    except TranscriptBlocked:
         _block_detected = True
         raise
-    if segments:
-        return segments
-
-    if api_blocked:
-        # The API lane was explicitly blocked and yt-dlp found nothing:
-        # report the block, not a missing transcript
-        _block_detected = True
-        raise TranscriptBlocked("YouTube is rate-limiting caption requests from this IP")
-    return None
+    return segments or None
 
 
 def get_transcript_api(
@@ -147,7 +182,7 @@ def get_transcript_api(
     language: str = "en",
     prefer_manual: bool = True,
 ) -> list[TranscriptSegment] | None:
-    """Fetch transcript via youtube-transcript-api (primary lane).
+    """Fetch transcript via youtube-transcript-api (fallback lane).
 
     Raises TranscriptBlocked when YouTube blocks the request; returns None
     for missing/disabled transcripts or any other failure.
@@ -233,76 +268,6 @@ def parse_json3_captions(path: Path) -> list[TranscriptSegment]:
             )
         )
     return segments
-
-
-def get_transcript_ytdlp(
-    video_id: str,
-    language: str = "en",
-    prefer_manual: bool = True,
-) -> list[TranscriptSegment] | None:
-    """Fetch transcript via yt-dlp subtitle extraction (fallback lane).
-
-    Requests json3 captions matching the language (including variants
-    like en-orig on auto-dubbed videos). Manual subtitles and automatic
-    captions are tried as separate passes in preference order. Raises
-    TranscriptBlocked when the caption download is rate-limited (429)
-    and no captions could be retrieved.
-    """
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    passes = ["--write-subs", "--write-auto-subs"]
-    if not prefer_manual:
-        passes.reverse()
-
-    saw_rate_limit = False
-    for subs_flag in passes:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            cmd = [
-                "yt-dlp",
-                "--skip-download",
-                "--no-playlist",
-                subs_flag,
-                "--sub-langs",
-                f"{language}.*,{language}",
-                "--sub-format",
-                "json3",
-                "--no-warnings",
-                "--remote-components",
-                "ejs:github",
-                "-o",
-                str(tmp_path / "%(id)s"),
-                url,
-            ]
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            except Exception:
-                continue
-
-            if (
-                "429" in result.stderr
-                or "Too Many Requests" in result.stderr
-                or is_bot_gate(result.stderr)
-            ):
-                saw_rate_limit = True
-
-            # Exact language match first, then variants (e.g. en-orig on
-            # auto-dubbed videos) in name order
-            exact_name = f"{video_id}.{language}.json3"
-            caption_files = sorted(
-                tmp_path.glob(f"{video_id}.*.json3"),
-                key=lambda p: (p.name != exact_name, p.name),
-            )
-            for caption_file in caption_files:
-                try:
-                    segments = parse_json3_captions(caption_file)
-                except (json.JSONDecodeError, OSError):
-                    continue
-                if segments:
-                    return segments
-
-    if saw_rate_limit:
-        raise TranscriptBlocked("YouTube is rate-limiting or bot-gating caption downloads")
-    return None
 
 
 def save_transcript_json(

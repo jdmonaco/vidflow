@@ -1,4 +1,4 @@
-"""Tests for the two-lane transcript fetcher (API primary, yt-dlp fallback)."""
+"""Tests for transcript resolution (downloaded captions first, API fallback)."""
 
 import json
 from pathlib import Path
@@ -11,7 +11,7 @@ from vidflow.capture.transcript import (
     TranscriptBlocked,
     TranscriptSegment,
     get_transcript,
-    get_transcript_ytdlp,
+    transcript_from_caption_files,
     parse_json3_captions,
     reset_block_state,
 )
@@ -56,143 +56,118 @@ class TestParseJson3:
         ]
 
 
-class TestGetTranscriptFallback:
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp")
+SEG = [TranscriptSegment(text="t", start=0.0, duration=1.0)]
+
+
+class TestGetTranscriptLanes:
+    """Downloaded caption files win; the API lane runs only when they yield nothing."""
+
     @patch("vidflow.capture.transcript.get_transcript_api")
-    def test_api_success_short_circuits(self, mock_api, mock_ytdlp):
-        sentinel = [TranscriptSegment(text="t", start=0.0, duration=1.0)]
-        mock_api.return_value = sentinel
-        assert get_transcript("abcdefghijk") == sentinel
-        mock_ytdlp.assert_not_called()
+    def test_caption_file_short_circuits_api(self, mock_api, tmp_path):
+        f = tmp_path / "abcdefghijk.en.json3"
+        _write_json3(f, text="from file")
+        segments = get_transcript("abcdefghijk", caption_files=[f])
+        assert segments[0].text == "from file"
+        mock_api.assert_not_called()
 
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp")
+    @patch("vidflow.capture.transcript.get_transcript_api", return_value=SEG)
+    def test_no_caption_files_falls_back_to_api(self, mock_api):
+        assert get_transcript("abcdefghijk", language="en", prefer_manual=False) == SEG
+        mock_api.assert_called_once_with("abcdefghijk", "en", False)
+
+    @patch("vidflow.capture.transcript.get_transcript_api", return_value=SEG)
+    def test_empty_caption_file_falls_back_to_api(self, mock_api, tmp_path):
+        f = tmp_path / "abcdefghijk.en.json3"
+        _write_json3(f, events=[])
+        assert get_transcript("abcdefghijk", caption_files=[f]) == SEG
+        mock_api.assert_called_once()
+
     @patch("vidflow.capture.transcript.get_transcript_api", return_value=None)
-    def test_api_failure_falls_back_to_ytdlp(self, mock_api, mock_ytdlp):
-        sentinel = [TranscriptSegment(text="t", start=0.0, duration=1.0)]
-        mock_ytdlp.return_value = sentinel
-        assert get_transcript("abcdefghijk", language="en", prefer_manual=False) == sentinel
-        mock_ytdlp.assert_called_once_with("abcdefghijk", "en", False)
+    def test_nothing_anywhere_returns_none(self, mock_api):
+        assert get_transcript("abcdefghijk") is None
 
 
-class TestGetTranscriptYtdlp:
-    """yt-dlp lane with a mocked subprocess that writes caption files."""
+class TestTranscriptFromCaptionFiles:
+    """Selection among the json3 files yt-dlp wrote alongside the download."""
 
-    def _fake_run(self, files_by_flag, recorded_flags):
-        """files_by_flag: {'--write-subs': {name: text}, ...} written per pass."""
-
-        def fake(cmd, **kwargs):
-            flag = next(f for f in ("--write-subs", "--write-auto-subs") if f in cmd)
-            recorded_flags.append(flag)
-            out_dir = Path(cmd[cmd.index("-o") + 1]).parent
-            for name, text in files_by_flag.get(flag, {}).items():
-                _write_json3(out_dir / name, text=text)
-
-            class R:
-                returncode = 0
-                stdout = ""
-                stderr = ""
-
-            return R()
-
-        return fake
-
-    def test_auto_captions_found_on_second_pass(self, monkeypatch):
-        flags = []
-        fake = self._fake_run(
-            {"--write-auto-subs": {"abcdefghijk.en-orig.json3": "auto text"}}, flags
-        )
-        with patch("vidflow.capture.transcript.subprocess.run", fake):
-            segments = get_transcript_ytdlp("abcdefghijk")
-        assert flags == ["--write-subs", "--write-auto-subs"]
-        assert segments is not None
-        assert segments[0].text == "auto text"
-
-    def test_manual_pass_preferred(self, monkeypatch):
-        flags = []
-        fake = self._fake_run(
-            {
-                "--write-subs": {"abcdefghijk.en.json3": "manual text"},
-                "--write-auto-subs": {"abcdefghijk.en.json3": "auto text"},
-            },
-            flags,
-        )
-        with patch("vidflow.capture.transcript.subprocess.run", fake):
-            segments = get_transcript_ytdlp("abcdefghijk", prefer_manual=True)
-        assert flags == ["--write-subs"]
-        assert segments[0].text == "manual text"
-
-    def test_exact_language_beats_variant(self, monkeypatch):
-        flags = []
-        fake = self._fake_run(
-            {
-                "--write-subs": {
-                    "abcdefghijk.en-orig.json3": "variant text",
-                    "abcdefghijk.en.json3": "exact text",
-                }
-            },
-            flags,
-        )
-        with patch("vidflow.capture.transcript.subprocess.run", fake):
-            segments = get_transcript_ytdlp("abcdefghijk")
+    def test_exact_language_beats_variant(self, tmp_path):
+        exact = tmp_path / "abcdefghijk.en.json3"
+        variant = tmp_path / "abcdefghijk.en-orig.json3"
+        _write_json3(exact, text="exact text")
+        _write_json3(variant, text="variant text")
+        segments = transcript_from_caption_files([variant, exact], "abcdefghijk")
         assert segments[0].text == "exact text"
 
-    def test_nothing_found_returns_none(self, monkeypatch):
-        flags = []
-        fake = self._fake_run({}, flags)
-        with patch("vidflow.capture.transcript.subprocess.run", fake):
-            assert get_transcript_ytdlp("abcdefghijk") is None
-        assert flags == ["--write-subs", "--write-auto-subs"]
+    def test_variant_used_when_exact_missing(self, tmp_path):
+        variant = tmp_path / "abcdefghijk.en-orig.json3"
+        _write_json3(variant, text="auto text")
+        segments = transcript_from_caption_files([variant], "abcdefghijk")
+        assert segments[0].text == "auto text"
+
+    def test_prefer_manual_orders_manual_language_first(self, tmp_path):
+        auto_exact = tmp_path / "abcdefghijk.en.json3"
+        manual_variant = tmp_path / "abcdefghijk.en-GB.json3"
+        _write_json3(auto_exact, text="auto text")
+        _write_json3(manual_variant, text="manual text")
+        files = [auto_exact, manual_variant]
+        assert (
+            transcript_from_caption_files(
+                files, "abcdefghijk", prefer_manual=True, manual_langs=frozenset({"en-GB"})
+            )[0].text
+            == "manual text"
+        )
+        assert (
+            transcript_from_caption_files(files, "abcdefghijk", prefer_manual=False)[0].text
+            == "auto text"
+        )
+
+    def test_ignores_other_videos_and_unparseable(self, tmp_path):
+        other = tmp_path / "zzzzzzzzzzz.en.json3"
+        broken = tmp_path / "abcdefghijk.en.json3"
+        _write_json3(other, text="other")
+        broken.write_text("not json", encoding="utf-8")
+        assert transcript_from_caption_files([other, broken], "abcdefghijk") is None
 
 
 class TestBlockedDetection:
     """Blocked fetches raise TranscriptBlocked instead of returning None."""
 
-    def _fake_run_429(self, cmd, **kwargs):
-        class R:
-            returncode = 1
-            stdout = ""
-            stderr = "ERROR: Unable to download video subtitles: HTTP Error 429: Too Many Requests"
-
-        return R()
-
-    def test_ytdlp_429_raises_blocked(self):
-        with patch("vidflow.capture.transcript.subprocess.run", self._fake_run_429):
-            with pytest.raises(TranscriptBlocked):
-                get_transcript_ytdlp("abcdefghijk")
-
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp", return_value=None)
-    @patch(
-        "vidflow.capture.transcript.get_transcript_api",
-        side_effect=TranscriptBlocked("blocked"),
-    )
-    def test_api_blocked_and_ytdlp_empty_raises(self, mock_api, mock_ytdlp):
+    @patch("vidflow.capture.transcript.get_transcript_api")
+    def test_caption_429_raises_without_touching_api(self, mock_api):
         with pytest.raises(TranscriptBlocked):
-            get_transcript("abcdefghijk")
+            get_transcript("abcdefghijk", captions_blocked=True)
+        mock_api.assert_not_called()
+        assert transcript_mod._block_detected is True
 
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp")
-    @patch(
-        "vidflow.capture.transcript.get_transcript_api",
-        side_effect=TranscriptBlocked("blocked"),
-    )
-    def test_api_blocked_but_ytdlp_succeeds(self, mock_api, mock_ytdlp):
-        sentinel = [TranscriptSegment(text="t", start=0.0, duration=1.0)]
-        mock_ytdlp.return_value = sentinel
-        assert get_transcript("abcdefghijk") == sentinel
+    @patch("vidflow.capture.transcript.get_transcript_api")
+    def test_caption_429_ignored_when_a_file_still_parsed(self, mock_api, tmp_path):
+        f = tmp_path / "abcdefghijk.en.json3"
+        _write_json3(f, text="got one")
+        segments = get_transcript("abcdefghijk", caption_files=[f], captions_blocked=True)
+        assert segments[0].text == "got one"
         assert transcript_mod._block_detected is False
 
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp", return_value=None)
     @patch(
         "vidflow.capture.transcript.get_transcript_api",
         side_effect=TranscriptBlocked("blocked"),
     )
-    def test_block_is_sticky_and_fails_fast(self, mock_api, mock_ytdlp):
+    def test_api_blocked_raises(self, mock_api):
         with pytest.raises(TranscriptBlocked):
             get_transcript("abcdefghijk")
-        # Second call short-circuits: no further lane attempts
+
+    @patch(
+        "vidflow.capture.transcript.get_transcript_api",
+        side_effect=TranscriptBlocked("blocked"),
+    )
+    def test_block_is_sticky_and_fails_fast(self, mock_api, tmp_path):
         with pytest.raises(TranscriptBlocked):
-            get_transcript("lmnopqrstuv")
+            get_transcript("abcdefghijk")
+        # Second call short-circuits even with a usable caption file
+        f = tmp_path / "lmnopqrstuv.en.json3"
+        _write_json3(f, text="unused")
+        with pytest.raises(TranscriptBlocked):
+            get_transcript("lmnopqrstuv", caption_files=[f])
         assert mock_api.call_count == 1
-        assert mock_ytdlp.call_count == 1
 
     def test_api_maps_request_blocked(self):
         from youtube_transcript_api import RequestBlocked
@@ -287,9 +262,8 @@ class TestPacing:
         assert pace_caption_request(span=(2.0, 5.0)) == 0.0
         assert calls == []
 
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp", return_value=None)
     @patch("vidflow.capture.transcript.get_transcript_api", return_value=None)
-    def test_get_transcript_paces_consecutive_calls(self, mock_api, mock_ytdlp, monkeypatch):
+    def test_get_transcript_paces_consecutive_calls(self, mock_api, monkeypatch):
         calls = []
         monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
         get_transcript("aaaaaaaaaaa")
@@ -297,14 +271,24 @@ class TestPacing:
         get_transcript("ccccccccccc")
         assert len(calls) == 2
 
-    @patch("vidflow.capture.transcript.get_transcript_ytdlp", return_value=None)
     @patch("vidflow.capture.transcript.get_transcript_api", return_value=None)
-    def test_no_pacing_when_no_caption_request_was_made(self, mock_api, mock_ytdlp, monkeypatch):
+    def test_no_pacing_when_no_caption_request_was_made(self, mock_api, monkeypatch):
         """A metadata failure before the caption stage must not trigger pacing."""
         calls = []
         monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
         # Simulate earlier videos failing before get_transcript was reached
         get_transcript("aaaaaaaaaaa")
+        assert calls == []
+
+    @patch("vidflow.capture.transcript.get_transcript_api", return_value=None)
+    def test_caption_files_do_not_consume_pacing(self, mock_api, monkeypatch, tmp_path):
+        """Captions that came with the download are not caption requests."""
+        calls = []
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
+        f = tmp_path / "aaaaaaaaaaa.en.json3"
+        _write_json3(f, text="x")
+        get_transcript("aaaaaaaaaaa", caption_files=[f])
+        get_transcript("bbbbbbbbbbb")  # first real API request: no sleep
         assert calls == []
 
 
@@ -333,11 +317,13 @@ class TestBotGate:
                 get_video_metadata("https://www.youtube.com/watch?v=abcdefghijk")
         assert not isinstance(exc.value, VideoBlocked)
 
-    def test_ytdlp_caption_bot_gate_raises_blocked(self, monkeypatch):
+    def test_fetch_video_bot_gate_raises_video_blocked(self, tmp_path):
+        from vidflow.capture.video import VideoBlocked, fetch_video
+
         proc = MagicMock(returncode=1, stdout="", stderr=self.BOT_STDERR)
-        with patch("vidflow.capture.transcript.subprocess.run", return_value=proc):
-            with pytest.raises(TranscriptBlocked):
-                get_transcript_ytdlp("abcdefghijk")
+        with patch("vidflow.capture.video.subprocess.run", return_value=proc):
+            with pytest.raises(VideoBlocked):
+                fetch_video("https://www.youtube.com/watch?v=abcdefghijk", tmp_path)
 
     def test_cmd_youtube_aborts_run_on_bot_gate(self, monkeypatch, capsys):
         from vidflow.capture.video import VideoBlocked

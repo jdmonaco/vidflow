@@ -79,13 +79,13 @@ class TestNoPlaylistFlag:
             get_video_metadata(WATCH_WITH_LIST)
         assert "--no-playlist" in recorded[0]
 
-    def test_download_video(self, tmp_path):
-        from vidflow.capture.video import download_video
+    def test_fetch_video(self, tmp_path):
+        from vidflow.capture.video import fetch_video
 
         recorded = []
         with patch("vidflow.capture.video.subprocess.run", self._fake_run(recorded)):
             with pytest.raises(VideoError):  # no file appears; flag still recorded
-                download_video(WATCH_WITH_LIST, tmp_path)
+                fetch_video(WATCH_WITH_LIST, tmp_path)
         assert "--no-playlist" in recorded[0]
 
     def test_get_stream_url(self):

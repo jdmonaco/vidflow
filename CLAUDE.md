@@ -57,9 +57,9 @@ src/vidflow/
 │   ├── markdown.py          # Obsidian markdown generation
 │   ├── metadata.py          # VideoMetadataProtocol
 │   ├── titling.py           # AI title generation (local quick slot)
-│   ├── transcript.py        # Transcript fetching (API lane + yt-dlp fallback)
+│   ├── transcript.py        # Transcript selection (download captions, API fallback)
 │   ├── utils.py             # URL parsing, formatting
-│   ├── video.py             # yt-dlp wrapper
+│   ├── video.py             # yt-dlp wrapper (single-call fetch_video)
 │   └── data/                # Bash completion scripts
 └── transcribe/              # Transcription (formerly vidscribe)
     ├── __init__.py           # Public API + transcribe_markdown()

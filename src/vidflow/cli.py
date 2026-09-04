@@ -180,6 +180,12 @@ Examples:
         action="store_true",
         help="Skip AI title generation",
     )
+    yt_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Recapture videos that already have a note in the output directory",
+    )
     yt_post = yt_parser.add_mutually_exclusive_group()
     yt_post.add_argument(
         "--transcribe",
@@ -383,6 +389,9 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     from vidflow.capture.transcript import TranscriptBlocked
     from vidflow.capture.video import VideoBlocked
 
+    # Per-video progress lines; a single video's result is its own summary
+    per_video = len(urls) > 1 and not args.json_output
+
     for i, url in enumerate(urls):
         try:
             result = capture_youtube(
@@ -397,6 +406,7 @@ def cmd_youtube(args: argparse.Namespace) -> int:
                 no_dedup=args.no_dedup,
                 keep_video=args.keep_video,
                 no_ai_title=args.no_ai_title,
+                force=args.force,
             )
         except (TranscriptBlocked, VideoBlocked) as e:
             msg = (
@@ -409,11 +419,17 @@ def cmd_youtube(args: argparse.Namespace) -> int:
             unattempted = len(urls) - i
             break
 
-        if result.success:
+        if result.success and result.data.get("skipped"):
+            # Already captured (and already post-processed, if that was
+            # requested on the earlier run): leave it out of this run's
+            # post-processing.
+            if per_video:
+                print(f"Skipped [{i + 1}/{len(urls)}]: {result.message}", file=sys.stderr)
+        elif result.success:
             captured_paths.append(Path(result.data["output_path"]))
         else:
             errors.append(result.message)
-            if not args.json_output:
+            if per_video:
                 print(f"Failed [{i + 1}/{len(urls)}]: {result.message}", file=sys.stderr)
 
         all_results.append(result)

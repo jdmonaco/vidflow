@@ -3,6 +3,7 @@
 These functions are Click-free and can be called programmatically.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,17 +21,56 @@ from vidflow.capture.markdown import (
     generate_markdown_filename,
 )
 from vidflow.capture.transcript import (
+    TranscriptBlocked,
     TranscriptSegment,
     get_transcript,
     save_transcript_json,
 )
+from vidflow.capture.utils import extract_video_id
 from vidflow.capture.video import (
     VideoMetadata,
-    download_video,
-    get_video_metadata,
+    fetch_video,
 )
 
 console = Console()
+
+
+class CaptureExists(Exception):
+    """The output directory already holds a note for this video."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        super().__init__(f"Already captured: {path.name}")
+
+
+_SOURCE_LINE = re.compile(r"^source:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def find_existing_capture(output_dir: Path, video_id: str) -> Path | None:
+    """Return the markdown note in output_dir whose frontmatter source is this video.
+
+    Notes are matched by the video id parsed from the ``source:`` URL, not
+    by filename, since the filename carries an AI-generated title. Only
+    the head of each file is read. Lets an aborted playlist run be rerun
+    with the same URL list without recapturing (or re-spending YouTube's
+    request budget on) the videos that already succeeded.
+    """
+    if not video_id or not output_dir.is_dir():
+        return None
+    for md_path in sorted(output_dir.glob("*.md")):
+        try:
+            with md_path.open(encoding="utf-8") as f:
+                head = f.read(4096)
+        except OSError:
+            continue
+        if not head.startswith("---"):
+            continue
+        fm_end = head.find("\n---", 3)
+        frontmatter = head[:fm_end] if fm_end > 0 else head
+        match = _SOURCE_LINE.search(frontmatter)
+        if match and extract_video_id(match.group(1).strip("\"'")) == video_id:
+            return md_path
+    return None
 
 
 def format_markdown(filepath: Path) -> bool:
@@ -75,6 +115,19 @@ def shorten_path(path: str) -> str:
     return path
 
 
+def _discard_download(video_path: Path, caption_files: list[Path], videos_dir: Path) -> None:
+    """Remove a fetched video and its captions after an aborted capture."""
+    for path in (video_path, *caption_files):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        videos_dir.rmdir()
+    except OSError:
+        pass
+
+
 def process_video(
     url: str,
     output_dir: Path,
@@ -87,6 +140,7 @@ def process_video(
     no_dedup: bool,
     keep_video: bool,
     no_ai_title: bool = False,
+    force: bool = False,
 ) -> Path:
     """Process a single YouTube video URL.
 
@@ -94,14 +148,32 @@ def process_video(
         Path to the generated markdown file.
 
     Raises:
+        CaptureExists: If output_dir already has a note for this video
+            (unless ``force``); no request is made in that case.
         VideoError: If video processing fails.
         FrameExtractionError: If frame extraction fails.
     """
-    # 1. Get video metadata
-    with console.status("[bold blue]Fetching video metadata...", spinner="dots"):
-        metadata: VideoMetadata = get_video_metadata(url)
+    # 0. Skip-existing check before any network request
+    video_id = extract_video_id(url) or ""
+    if not force:
+        existing = find_existing_capture(output_dir, video_id)
+        if existing is not None:
+            raise CaptureExists(existing)
 
-    console.print("[green]+[/] Fetched video metadata")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    videos_dir = output_dir / "videos"
+    videos_dir.mkdir(exist_ok=True)
+
+    # 1. One yt-dlp extraction: metadata + captions + video
+    with console.status(
+        "[bold blue]Fetching video (metadata, captions, download)...", spinner="dots"
+    ):
+        fetch = fetch_video(url, videos_dir, language=language)
+
+    metadata: VideoMetadata = fetch.metadata
+    video_path = fetch.video_path
+    video_size = format_size(video_path.stat().st_size)
+    console.print(f"[green]+[/] Fetched video ({video_size})")
     console.print(f"  [dim]Title:[/] {metadata.title}")
     console.print(f"  [dim]Channel:[/] {metadata.channel}")
 
@@ -121,25 +193,33 @@ def process_video(
                 metadata.title = result.ai_title
                 console.print(f"[green]+[/] AI title: {metadata.title}")
 
-    # 2. Create directory structure
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 2. Resolve transcript from the downloaded captions, falling back to
+    # the transcript API. A block (TranscriptBlocked) propagates and aborts
+    # the run before any further requests; the downloaded video is removed
+    # first so nothing lingers in videos/.
+    try:
+        with console.status("[bold blue]Resolving transcript...", spinner="dots"):
+            transcript: list[TranscriptSegment] | None = get_transcript(
+                metadata.video_id,
+                language=language,
+                prefer_manual=prefer_manual,
+                log=lambda m: console.print(f"[dim]{m}[/]"),
+                caption_files=fetch.caption_files,
+                manual_langs=fetch.manual_langs,
+                captions_blocked=fetch.captions_blocked,
+            )
+    except TranscriptBlocked:
+        _discard_download(video_path, fetch.caption_files, videos_dir)
+        raise
+    finally:
+        for caption_file in fetch.caption_files:
+            caption_file.unlink(missing_ok=True)
+
+    # 3. Create directory structure
     frames_dir = output_dir / "images" / metadata.video_id
     frames_dir.mkdir(parents=True, exist_ok=True)
     transcripts_dir = output_dir / "transcripts"
     transcripts_dir.mkdir(exist_ok=True)
-    videos_dir = output_dir / "videos"
-    videos_dir.mkdir(exist_ok=True)
-
-    # 3. Get transcript. A blocked fetch (TranscriptBlocked) propagates and
-    # aborts the run before any further requests — no download, no next
-    # video — to avoid deepening the rate-limit block.
-    with console.status("[bold blue]Fetching transcript...", spinner="dots"):
-        transcript: list[TranscriptSegment] | None = get_transcript(
-            metadata.video_id,
-            language=language,
-            prefer_manual=prefer_manual,
-            log=lambda m: console.print(f"[dim]{m}[/]"),
-        )
 
     if transcript:
         console.print(f"[green]+[/] Found {len(transcript)} transcript segments")
@@ -150,14 +230,7 @@ def process_video(
     else:
         console.print("[yellow]![/] No transcript available, proceeding with frames only")
 
-    # 4. Download video
-    with console.status("[bold blue]Downloading video...", spinner="dots"):
-        video_path = download_video(url, videos_dir)
-
-    video_size = format_size(video_path.stat().st_size)
-    console.print(f"[green]+[/] Downloaded video ({video_size})")
-
-    # 5. Extract frames (with integrated dedup)
+    # 4. Extract frames (with integrated dedup)
     with console.status("[bold blue]Extracting frames...", spinner="dots"):
         frames = extract_frames_from_file(
             video_path,
@@ -171,7 +244,7 @@ def process_video(
     dedup_msg = "" if no_dedup else " (deduplicated)"
     console.print(f"[green]+[/] Extracted {len(frames)} frames{dedup_msg}")
 
-    # 6. Handle video file (keep or delete)
+    # 5. Handle video file (keep or delete)
     final_video_path: Path | None = None
     if keep_video:
         md_filename = generate_markdown_filename(metadata)
@@ -190,7 +263,7 @@ def process_video(
         except Exception:
             pass
 
-    # 7. Generate markdown
+    # 6. Generate markdown
     with console.status("[bold blue]Generating markdown...", spinner="dots"):
         md_file = generate_markdown_file(
             metadata,
@@ -203,7 +276,7 @@ def process_video(
 
     console.print("[green]+[/] Generated markdown")
 
-    # 8. Format markdown (if mdformat available)
+    # 7. Format markdown (if mdformat available)
     if format_markdown(md_file):
         console.print("  [dim]Formatted with mdformat[/]")
 

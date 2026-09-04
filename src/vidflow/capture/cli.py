@@ -22,6 +22,7 @@ from vidflow.capture.config import (
     resolve_output_path,
 )
 from vidflow.capture.core import (
+    CaptureExists,
     process_local_video,
     process_video,
     shorten_path,
@@ -167,6 +168,12 @@ Examples:
         default=not _cfg.get("ai_title", True),
         help="Disable AI title generation",
     )
+    parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Recapture videos that already have a note in the output directory",
+    )
     parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--version", action="version", version=f"ytcapture (vidflow {__version__})")
@@ -225,6 +232,7 @@ Examples:
     console.print(f"\n[bold]Processing {len(video_urls)} video(s)...[/]\n")
 
     success_count = 0
+    skipped_count = 0
     error_count = 0
 
     for i, video_url in enumerate(video_urls, 1):
@@ -242,9 +250,13 @@ Examples:
                 args.no_dedup,
                 args.keep_video,
                 args.no_ai_title,
+                force=args.force,
             )
             console.print(f"[green]+[/] {md_file.name}")
             success_count += 1
+        except CaptureExists as e:
+            console.print(f"[yellow]-[/] Skipped (already captured): {e.path.name}")
+            skipped_count += 1
         except (TranscriptBlocked, VideoBlocked) as e:
             console.print(
                 f"[red]x[/] ABORTED: {e} (blocked at video {i}/{len(video_urls)}). "
@@ -258,12 +270,16 @@ Examples:
             error_count += 1
 
     # 7. Summary
+    skipped_note = f", {skipped_count} skipped" if skipped_count else ""
     if error_count > 0:
         console.print(
-            f"\n[bold yellow]Complete![/] {success_count} succeeded, {error_count} failed"
+            f"\n[bold yellow]Complete![/] {success_count} succeeded, "
+            f"{error_count} failed{skipped_note}"
         )
     else:
-        console.print(f"\n[bold green]Complete![/] {success_count} video(s) processed")
+        console.print(
+            f"\n[bold green]Complete![/] {success_count} video(s) processed{skipped_note}"
+        )
 
     return 0
 
