@@ -71,14 +71,6 @@ class TestNoPlaylistFlag:
 
         return fake
 
-    def test_get_video_metadata(self):
-        from vidflow.capture.video import get_video_metadata
-
-        recorded = []
-        with patch("vidflow.capture.video.subprocess.run", self._fake_run(recorded)):
-            get_video_metadata(WATCH_WITH_LIST)
-        assert "--no-playlist" in recorded[0]
-
     def test_fetch_video(self, tmp_path):
         from vidflow.capture.video import fetch_video
 

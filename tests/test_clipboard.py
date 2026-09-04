@@ -173,105 +173,51 @@ class TestGetClipboardUrls:
 
 
 class TestPreviewUrls:
-    """Tests for preview_urls() confirmation behavior."""
+    """preview_urls() lists URLs offline and confirms only for the clipboard source."""
 
-    @patch("builtins.input", return_value="y")
-    @patch("vidflow.capture.cli.get_video_metadata")
-    def test_confirm_accepted(self, mock_metadata, mock_input):
+    URL = "https://www.youtube.com/watch?v=abcdefghijk"
+
+    @pytest.fixture(autouse=True)
+    def no_network(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise AssertionError("preview must not spawn yt-dlp")
+
+        monkeypatch.setattr("vidflow.capture.video.subprocess.run", boom)
+
+    def _console(self):
+        import io
+
         from rich.console import Console
 
-        from vidflow.capture.cli import preview_urls
-        from vidflow.capture.video import VideoMetadata
+        return Console(file=io.StringIO(), record=True, width=200)
 
-        mock_metadata.return_value = VideoMetadata(
-            video_id="abc123",
-            title="Test Video",
-            channel="Test Channel",
-            upload_date="20240101",
-            description="Test",
-            duration=120.0,
-        )
-        con = Console(quiet=True)
-        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="clipboard")
-        assert result is True
+    @patch("builtins.input", return_value="y")
+    def test_confirm_accepted(self, mock_input):
+        from vidflow.capture.cli import preview_urls
+
+        assert preview_urls([self.URL], self._console(), source="clipboard") is True
 
     @patch("builtins.input", return_value="n")
-    @patch("vidflow.capture.cli.get_video_metadata")
-    def test_confirm_rejected(self, mock_metadata, mock_input):
-        from rich.console import Console
-
+    def test_confirm_rejected(self, mock_input):
         from vidflow.capture.cli import preview_urls
-        from vidflow.capture.video import VideoMetadata
 
-        mock_metadata.return_value = VideoMetadata(
-            video_id="abc123",
-            title="Test Video",
-            channel="Test Channel",
-            upload_date="20240101",
-            description="Test",
-            duration=120.0,
-        )
-        con = Console(quiet=True)
-        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="clipboard")
-        assert result is False
+        assert preview_urls([self.URL], self._console(), source="clipboard") is False
 
     @patch("builtins.input", return_value="y")
-    @patch("vidflow.capture.cli.get_video_metadata")
-    def test_metadata_unavailable(self, mock_metadata, mock_input):
-        from rich.console import Console
-
+    def test_table_lists_ids_and_urls_without_network(self, mock_input):
         from vidflow.capture.cli import preview_urls
-        from vidflow.capture.video import VideoError
 
-        mock_metadata.side_effect = VideoError("not found")
-        con = Console(quiet=True)
-        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="clipboard")
-        assert result is True
+        con = self._console()
+        urls = [self.URL, "https://youtu.be/lmnopqrstuv"]
+        assert preview_urls(urls, con, source="clipboard") is True
+        text = con.export_text()
+        assert "abcdefghijk" in text and "lmnopqrstuv" in text
+        assert self.URL in text
 
-    @patch("builtins.input", return_value="y")
-    @patch("vidflow.capture.cli.get_video_metadata")
-    def test_multiple_urls(self, mock_metadata, mock_input):
-        from rich.console import Console
-
+    def test_non_clipboard_source_auto_confirms(self):
         from vidflow.capture.cli import preview_urls
-        from vidflow.capture.video import VideoMetadata
 
-        mock_metadata.return_value = VideoMetadata(
-            video_id="abc123",
-            title="Test Video",
-            channel="Test Channel",
-            upload_date="20240101",
-            description="Test",
-            duration=60.0,
-        )
-        con = Console(quiet=True)
-        urls = [
-            "https://www.youtube.com/watch?v=abc123",
-            "https://www.youtube.com/watch?v=def456",
-            "https://www.youtube.com/watch?v=ghi789",
-        ]
-        result = preview_urls(urls, con, source="clipboard")
-        assert result is True
-        assert mock_metadata.call_count == 3
-
-    @patch("vidflow.capture.cli.get_video_metadata")
-    def test_non_clipboard_source_auto_confirms(self, mock_metadata):
-        from rich.console import Console
-
-        from vidflow.capture.cli import preview_urls
-        from vidflow.capture.video import VideoMetadata
-
-        mock_metadata.return_value = VideoMetadata(
-            video_id="abc123",
-            title="Test Video",
-            channel="Test Channel",
-            upload_date="20240101",
-            description="Test",
-            duration=120.0,
-        )
-        con = Console(quiet=True)
-        result = preview_urls(["https://www.youtube.com/watch?v=abc123"], con, source="args")
-        assert result is True
+        assert preview_urls([self.URL], self._console(), source="args") is True
 
 
 class TestVidflowClipboardFallback:

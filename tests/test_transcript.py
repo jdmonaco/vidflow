@@ -300,21 +300,13 @@ class TestBotGate:
         "Use --cookies-from-browser or --cookies for the authentication."
     )
 
-    def test_metadata_bot_gate_raises_video_blocked(self):
-        from vidflow.capture.video import VideoBlocked, get_video_metadata
-
-        proc = MagicMock(returncode=1, stdout="", stderr=self.BOT_STDERR)
-        with patch("vidflow.capture.video.subprocess.run", return_value=proc):
-            with pytest.raises(VideoBlocked):
-                get_video_metadata("https://www.youtube.com/watch?v=abcdefghijk")
-
-    def test_other_sign_in_stays_video_error(self):
-        from vidflow.capture.video import VideoBlocked, VideoError, get_video_metadata
+    def test_other_sign_in_stays_video_error(self, tmp_path):
+        from vidflow.capture.video import VideoBlocked, VideoError, fetch_video
 
         proc = MagicMock(returncode=1, stdout="", stderr="ERROR: Sign in to confirm your age")
         with patch("vidflow.capture.video.subprocess.run", return_value=proc):
             with pytest.raises(VideoError) as exc:
-                get_video_metadata("https://www.youtube.com/watch?v=abcdefghijk")
+                fetch_video("https://www.youtube.com/watch?v=abcdefghijk", tmp_path)
         assert not isinstance(exc.value, VideoBlocked)
 
     def test_fetch_video_bot_gate_raises_video_blocked(self, tmp_path):

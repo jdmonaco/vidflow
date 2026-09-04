@@ -34,7 +34,6 @@ from vidflow.capture.utils import extract_youtube_urls
 from vidflow.capture.video import (
     VideoBlocked,
     VideoError,
-    get_video_metadata,
     normalize_video_urls,
 )
 
@@ -66,28 +65,23 @@ def get_clipboard_urls() -> list[str]:
 
 
 def preview_urls(video_urls: list[str], con: Console, source: str = "clipboard") -> bool:
-    """Show a preview table of video URLs and confirm."""
-    from vidflow.capture.utils import format_timestamp
+    """List the video URLs about to be captured and confirm (clipboard source only).
+
+    Purely offline: the table used to fetch title/channel/duration per URL,
+    which cost one yt-dlp extraction per video against YouTube's per-IP
+    request budget before capture had even started (and showed
+    "(metadata unavailable)" for every row once the IP was gated).
+    """
+    from vidflow.capture.utils import extract_video_id
 
     title = "Clipboard URLs" if source == "clipboard" else "Input URLs"
     table = Table(title=title)
     table.add_column("#", justify="right", style="dim")
-    table.add_column("Title", style="bold")
-    table.add_column("Channel")
-    table.add_column("Duration", justify="right")
+    table.add_column("Video ID", style="bold")
+    table.add_column("URL")
 
-    with con.status("[bold blue]Fetching video metadata...", spinner="dots"):
-        for i, url in enumerate(video_urls, 1):
-            try:
-                metadata = get_video_metadata(url)
-                table.add_row(
-                    str(i),
-                    metadata.title,
-                    metadata.channel,
-                    format_timestamp(metadata.duration),
-                )
-            except VideoError:
-                table.add_row(str(i), "(metadata unavailable)", url, "")
+    for i, url in enumerate(video_urls, 1):
+        table.add_row(str(i), extract_video_id(url) or "?", url)
 
     con.print()
     con.print(table)

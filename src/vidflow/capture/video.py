@@ -59,64 +59,6 @@ def is_bot_gate(stderr: str) -> bool:
     return "not a bot" in stderr
 
 
-def get_video_metadata(url: str) -> VideoMetadata:
-    """Extract metadata from a YouTube video."""
-    cmd = [
-        "yt-dlp",
-        "--dump-json",
-        "--skip-download",
-        "--no-playlist",
-        "--no-warnings",
-        "--remote-components",
-        "ejs:github",
-        url,
-    ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-
-        if result.returncode != 0:
-            error_msg = result.stderr
-            if "Private video" in error_msg:
-                raise VideoError(f"Video is private: {url}")
-            if "Video unavailable" in error_msg:
-                raise VideoError(f"Video is unavailable: {url}")
-            if is_bot_gate(error_msg):
-                raise VideoBlocked(
-                    "YouTube is bot-gating requests from this IP (sign-in challenge)"
-                )
-            if "Sign in" in error_msg:
-                raise VideoError(f"Video requires authentication: {url}")
-            raise VideoError(f"Failed to get video metadata: {error_msg}")
-
-        info = json.loads(result.stdout)
-        video_id = extract_video_id(url) or info.get("id", "")
-
-        return VideoMetadata(
-            video_id=video_id,
-            title=info.get("title", "Untitled"),
-            channel=info.get("channel", info.get("uploader", "Unknown")),
-            upload_date=info.get("upload_date", ""),
-            description=info.get("description", ""),
-            duration=float(info.get("duration", 0)),
-        )
-
-    except subprocess.TimeoutExpired:
-        raise VideoError("Metadata extraction timed out")
-    except json.JSONDecodeError as e:
-        raise VideoError(f"Failed to parse video metadata: {e}") from e
-    except FileNotFoundError:
-        raise VideoError(
-            "yt-dlp not found. Please install yt-dlp:\n"
-            "  pip install yt-dlp\n"
-            "  or: brew install yt-dlp"
-        )
-    except VideoError:
-        raise
-    except Exception as e:
-        raise VideoError(f"Unexpected error getting metadata: {e}") from e
-
-
 def get_stream_url(url: str) -> str:
     """Get the direct stream URL for a YouTube video."""
     format_spec = "bestvideo[height<=480][ext=mp4]/bestvideo[height<=480]/18/best"
