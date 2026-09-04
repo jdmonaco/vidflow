@@ -363,6 +363,7 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     errors = []
     all_results = []
     captured_paths = []
+    unattempted = 0  # videos never tried after a block aborts the run
 
     urls = _resolve_youtube_urls(args)
     if urls is None:
@@ -378,13 +379,11 @@ def cmd_youtube(args: argparse.Namespace) -> int:
         print("No valid video URLs found.", file=sys.stderr)
         return ExitCode.USAGE_ERROR
 
+    from vidflow.capture import capture_youtube
+    from vidflow.capture.transcript import TranscriptBlocked
+    from vidflow.capture.video import VideoBlocked
+
     for i, url in enumerate(urls):
-        from vidflow.capture import capture_youtube
-        from vidflow.capture.transcript import TranscriptBlocked
-        from vidflow.capture.utils import pace_bulk_requests
-
-        pace_bulk_requests(i, len(urls), log=lambda msg: print(msg, file=sys.stderr))
-
         try:
             result = capture_youtube(
                 url=url,
@@ -399,21 +398,23 @@ def cmd_youtube(args: argparse.Namespace) -> int:
                 keep_video=args.keep_video,
                 no_ai_title=args.no_ai_title,
             )
-        except TranscriptBlocked:
+        except (TranscriptBlocked, VideoBlocked) as e:
             msg = (
-                f"ABORTED: YouTube is rate-limiting caption requests from this "
-                f"IP (blocked at video {i + 1}/{len(urls)}). Stopping all "
-                "requests to avoid deepening the block; retry later or via VPN."
+                f"ABORTED: {e} (blocked at video {i + 1}/{len(urls)}). Stopping "
+                "all requests to avoid deepening the block; retry later or via VPN."
             )
             errors.append(msg)
             if not args.json_output:
                 print(msg, file=sys.stderr)
+            unattempted = len(urls) - i
             break
 
         if result.success:
             captured_paths.append(Path(result.data["output_path"]))
         else:
             errors.append(result.message)
+            if not args.json_output:
+                print(f"Failed [{i + 1}/{len(urls)}]: {result.message}", file=sys.stderr)
 
         all_results.append(result)
 
@@ -427,7 +428,7 @@ def cmd_youtube(args: argparse.Namespace) -> int:
 
     # Build combined result
     success_count = sum(1 for r in all_results if r.success)
-    total = len(all_results)
+    total = len(all_results) + unattempted
 
     if len(urls) == 1 and len(all_results) == 1:
         combined = all_results[0]

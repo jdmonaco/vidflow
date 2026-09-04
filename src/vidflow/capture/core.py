@@ -138,6 +138,7 @@ def process_video(
             metadata.video_id,
             language=language,
             prefer_manual=prefer_manual,
+            log=lambda m: console.print(f"[dim]{m}[/]"),
         )
 
     if transcript:

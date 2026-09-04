@@ -8,8 +8,10 @@ yt-dlp's full extractor still reaches the same captions.
 """
 
 import json
+import random
 import subprocess
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -19,6 +21,8 @@ from youtube_transcript_api import (
     TranscriptsDisabled,
     YouTubeTranscriptApi,
 )
+
+from vidflow.capture.video import is_bot_gate
 
 
 @dataclass
@@ -52,27 +56,66 @@ class TranscriptBlocked(TranscriptError):
 # bulk runs report the block rather than hammering the endpoint.
 _block_detected = False
 
+# Monotonic timestamp of the last caption request made by this process;
+# None until the first one. Drives pacing between caption requests.
+_last_caption_request: float | None = None
+
+# Jittered spacing (seconds) enforced between consecutive caption requests
+PACE_SPAN: tuple[float, float] = (2.0, 5.0)
+
 
 def reset_block_state() -> None:
-    """Clear the sticky block flag (tests and long-lived processes)."""
-    global _block_detected
+    """Clear the sticky block flag and pacing clock (tests, long-lived processes)."""
+    global _block_detected, _last_caption_request
     _block_detected = False
+    _last_caption_request = None
+
+
+def pace_caption_request(log=None, span: tuple[float, float] = PACE_SPAN) -> float:
+    """Sleep as needed so consecutive caption requests are spaced apart.
+
+    YouTube's caption endpoints rate-limit bursts from one IP; thresholds
+    are undocumented, but one observed trip (2026-08-29): ~40 caption
+    requests (2 per video) at ~2s spacing blocked after video ~20. The
+    pause is tied to caption requests only: nothing sleeps before the
+    first request of the process, and time already spent since the last
+    one (a video download, a failed metadata call) counts toward the
+    jittered interval, so it mainly protects runs with tiny downloads
+    (e.g., Shorts). Returns the seconds actually slept.
+    """
+    global _last_caption_request
+    now = time.monotonic()
+    slept = 0.0
+    if _last_caption_request is not None:
+        remaining = random.uniform(*span) - (now - _last_caption_request)
+        if remaining > 0:
+            if log:
+                log(f"Pacing {remaining:.1f}s before next caption request (rate-limit courtesy)")
+            time.sleep(remaining)
+            slept = remaining
+    _last_caption_request = time.monotonic()
+    return slept
 
 
 def get_transcript(
     video_id: str,
     language: str = "en",
     prefer_manual: bool = True,
+    log=None,
 ) -> list[TranscriptSegment] | None:
     """Fetch transcript for a YouTube video, falling back to yt-dlp.
 
     Returns None when no transcript exists; raises TranscriptBlocked when
     YouTube is rate-limiting caption requests from this IP (sticky for the
     rest of the process, so bulk runs fail fast after the first block).
+    Consecutive calls are paced (see pace_caption_request); ``log`` receives
+    the pacing notice when a sleep is needed.
     """
     global _block_detected
     if _block_detected:
         raise TranscriptBlocked("caption requests from this IP are rate-limited")
+
+    pace_caption_request(log=log)
 
     api_blocked = False
     try:
@@ -235,7 +278,11 @@ def get_transcript_ytdlp(
             except Exception:
                 continue
 
-            if "429" in result.stderr or "Too Many Requests" in result.stderr:
+            if (
+                "429" in result.stderr
+                or "Too Many Requests" in result.stderr
+                or is_bot_gate(result.stderr)
+            ):
                 saw_rate_limit = True
 
             # Exact language match first, then variants (e.g. en-orig on
@@ -254,7 +301,7 @@ def get_transcript_ytdlp(
                     return segments
 
     if saw_rate_limit:
-        raise TranscriptBlocked("YouTube returned 429 (Too Many Requests) for caption downloads")
+        raise TranscriptBlocked("YouTube is rate-limiting or bot-gating caption downloads")
     return None
 
 

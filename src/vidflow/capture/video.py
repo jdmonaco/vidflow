@@ -43,6 +43,22 @@ class VideoError(Exception):
     pass
 
 
+class VideoBlocked(VideoError):
+    """YouTube is bot-gating page requests from this IP.
+
+    yt-dlp reports this as "Sign in to confirm you're not a bot". Like a
+    caption 429 it is an IP-level condition, not a property of the video:
+    every further request will fail the same way and deepen the block.
+    """
+
+    pass
+
+
+def is_bot_gate(stderr: str) -> bool:
+    """True when yt-dlp output carries YouTube's sign-in bot challenge."""
+    return "not a bot" in stderr
+
+
 def get_video_metadata(url: str) -> VideoMetadata:
     """Extract metadata from a YouTube video."""
     cmd = [
@@ -65,6 +81,10 @@ def get_video_metadata(url: str) -> VideoMetadata:
                 raise VideoError(f"Video is private: {url}")
             if "Video unavailable" in error_msg:
                 raise VideoError(f"Video is unavailable: {url}")
+            if is_bot_gate(error_msg):
+                raise VideoBlocked(
+                    "YouTube is bot-gating requests from this IP (sign-in challenge)"
+                )
             if "Sign in" in error_msg:
                 raise VideoError(f"Video requires authentication: {url}")
             raise VideoError(f"Failed to get video metadata: {error_msg}")
@@ -163,6 +183,10 @@ def download_video(url: str, output_dir: Path) -> Path:
                 raise VideoError(f"Video is private: {url}")
             if "Video unavailable" in error_msg:
                 raise VideoError(f"Video is unavailable: {url}")
+            if is_bot_gate(error_msg):
+                raise VideoBlocked(
+                    "YouTube is bot-gating requests from this IP (sign-in challenge)"
+                )
             if "Sign in" in error_msg:
                 raise VideoError(f"Video requires authentication: {url}")
             raise VideoError(f"Failed to download video: {error_msg}")

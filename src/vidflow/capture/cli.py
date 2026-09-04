@@ -29,8 +29,9 @@ from vidflow.capture.core import (
 from vidflow.capture.frames import FrameExtractionError
 from vidflow.capture.local import LocalVideoError
 from vidflow.capture.transcript import TranscriptBlocked
-from vidflow.capture.utils import extract_youtube_urls, pace_bulk_requests
+from vidflow.capture.utils import extract_youtube_urls
 from vidflow.capture.video import (
+    VideoBlocked,
     VideoError,
     get_video_metadata,
     normalize_video_urls,
@@ -227,7 +228,6 @@ Examples:
     error_count = 0
 
     for i, video_url in enumerate(video_urls, 1):
-        pace_bulk_requests(i - 1, len(video_urls), log=lambda m: console.print(f"[dim]{m}[/]"))
         console.print(f"[bold blue][{i}/{len(video_urls)}][/] {video_url}")
         try:
             md_file = process_video(
@@ -245,10 +245,9 @@ Examples:
             )
             console.print(f"[green]+[/] {md_file.name}")
             success_count += 1
-        except TranscriptBlocked:
+        except (TranscriptBlocked, VideoBlocked) as e:
             console.print(
-                "[red]x[/] ABORTED: YouTube is rate-limiting caption requests "
-                f"from this IP (blocked at video {i}/{len(video_urls)}). "
+                f"[red]x[/] ABORTED: {e} (blocked at video {i}/{len(video_urls)}). "
                 "Stopping all requests to avoid deepening the block; "
                 "retry later or via VPN."
             )

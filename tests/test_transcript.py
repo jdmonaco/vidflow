@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -230,7 +230,7 @@ class TestBulkAbort:
         from vidflow.cli_common import OperationResult
 
         # No pacing sleeps during the test
-        monkeypatch.setattr("vidflow.capture.utils.time.sleep", lambda s: None)
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", lambda s: None)
 
         calls = []
 
@@ -251,24 +251,127 @@ class TestBulkAbort:
 
 
 class TestPacing:
-    """pace_bulk_requests sleeps only between videos of a bulk run."""
+    """Caption requests are paced against the previous caption request."""
 
-    def test_no_sleep_for_first_or_single(self, monkeypatch):
-        from vidflow.capture.utils import pace_bulk_requests
+    def test_no_sleep_before_first_request(self, monkeypatch):
+        from vidflow.capture.transcript import pace_caption_request
 
         calls = []
-        monkeypatch.setattr("vidflow.capture.utils.time.sleep", calls.append)
-        pace_bulk_requests(0, 5)
-        pace_bulk_requests(1, 1)
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
+        assert pace_caption_request() == 0.0
         assert calls == []
 
-    def test_jittered_sleep_between_videos(self, monkeypatch):
-        from vidflow.capture.utils import pace_bulk_requests
+    def test_jittered_sleep_between_back_to_back_requests(self, monkeypatch):
+        from vidflow.capture.transcript import pace_caption_request
 
         calls = []
         logs = []
-        monkeypatch.setattr("vidflow.capture.utils.time.sleep", calls.append)
-        pace_bulk_requests(1, 5, log=logs.append, span=(2.0, 5.0))
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
+        pace_caption_request()
+        pace_caption_request(log=logs.append, span=(2.0, 5.0))
         assert len(calls) == 1
-        assert 2.0 <= calls[0] <= 5.0
+        assert 0.0 < calls[0] <= 5.0
         assert logs and "Pacing" in logs[0]
+
+    def test_elapsed_time_counts_toward_interval(self, monkeypatch):
+        from vidflow.capture.transcript import pace_caption_request
+
+        calls = []
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
+        pace_caption_request()
+        # A slow download happened since the last caption request
+        monkeypatch.setattr(
+            "vidflow.capture.transcript._last_caption_request",
+            transcript_mod.time.monotonic() - 60.0,
+        )
+        assert pace_caption_request(span=(2.0, 5.0)) == 0.0
+        assert calls == []
+
+    @patch("vidflow.capture.transcript.get_transcript_ytdlp", return_value=None)
+    @patch("vidflow.capture.transcript.get_transcript_api", return_value=None)
+    def test_get_transcript_paces_consecutive_calls(self, mock_api, mock_ytdlp, monkeypatch):
+        calls = []
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
+        get_transcript("aaaaaaaaaaa")
+        get_transcript("bbbbbbbbbbb")
+        get_transcript("ccccccccccc")
+        assert len(calls) == 2
+
+    @patch("vidflow.capture.transcript.get_transcript_ytdlp", return_value=None)
+    @patch("vidflow.capture.transcript.get_transcript_api", return_value=None)
+    def test_no_pacing_when_no_caption_request_was_made(self, mock_api, mock_ytdlp, monkeypatch):
+        """A metadata failure before the caption stage must not trigger pacing."""
+        calls = []
+        monkeypatch.setattr("vidflow.capture.transcript.time.sleep", calls.append)
+        # Simulate earlier videos failing before get_transcript was reached
+        get_transcript("aaaaaaaaaaa")
+        assert calls == []
+
+
+class TestBotGate:
+    """YouTube's sign-in bot challenge is an IP-level block, like a 429."""
+
+    BOT_STDERR = (
+        "ERROR: [youtube] abcdefghijk: Sign in to confirm you\u2019re not a bot. "
+        "Use --cookies-from-browser or --cookies for the authentication."
+    )
+
+    def test_metadata_bot_gate_raises_video_blocked(self):
+        from vidflow.capture.video import VideoBlocked, get_video_metadata
+
+        proc = MagicMock(returncode=1, stdout="", stderr=self.BOT_STDERR)
+        with patch("vidflow.capture.video.subprocess.run", return_value=proc):
+            with pytest.raises(VideoBlocked):
+                get_video_metadata("https://www.youtube.com/watch?v=abcdefghijk")
+
+    def test_other_sign_in_stays_video_error(self):
+        from vidflow.capture.video import VideoBlocked, VideoError, get_video_metadata
+
+        proc = MagicMock(returncode=1, stdout="", stderr="ERROR: Sign in to confirm your age")
+        with patch("vidflow.capture.video.subprocess.run", return_value=proc):
+            with pytest.raises(VideoError) as exc:
+                get_video_metadata("https://www.youtube.com/watch?v=abcdefghijk")
+        assert not isinstance(exc.value, VideoBlocked)
+
+    def test_ytdlp_caption_bot_gate_raises_blocked(self, monkeypatch):
+        proc = MagicMock(returncode=1, stdout="", stderr=self.BOT_STDERR)
+        with patch("vidflow.capture.transcript.subprocess.run", return_value=proc):
+            with pytest.raises(TranscriptBlocked):
+                get_transcript_ytdlp("abcdefghijk")
+
+    def test_cmd_youtube_aborts_run_on_bot_gate(self, monkeypatch, capsys):
+        from vidflow.capture.video import VideoBlocked
+        from vidflow.cli import main as vidflow_main
+
+        urls = TestBulkAbort.URLS
+        calls = []
+
+        def fake_capture(**kwargs):
+            calls.append(kwargs["url"])
+            raise VideoBlocked("YouTube is bot-gating requests from this IP")
+
+        monkeypatch.setattr("vidflow.capture.capture_youtube", fake_capture)
+
+        result = vidflow_main(["youtube", *urls])
+
+        assert result == 1
+        assert calls == urls[:1]
+        err = capsys.readouterr().err
+        assert "ABORTED" in err and "bot-gating" in err
+
+    def test_cmd_youtube_prints_per_video_failure(self, monkeypatch, capsys):
+        from vidflow.cli import main as vidflow_main
+        from vidflow.cli_common import OperationResult
+
+        def fake_capture(**kwargs):
+            return OperationResult(
+                success=False, message="YouTube capture failed: boom", errors=["boom"]
+            )
+
+        monkeypatch.setattr("vidflow.capture.capture_youtube", fake_capture)
+        result = vidflow_main(["youtube", *TestBulkAbort.URLS])
+
+        assert result == 1
+        err = capsys.readouterr().err
+        assert err.count("Failed [") == 3
+        assert "boom" in err

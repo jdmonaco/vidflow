@@ -45,9 +45,11 @@ def capture_youtube(
     """Capture YouTube video with OperationResult output.
 
     Wraps process_video() for use by the vidflow CLI layer.
-    TranscriptBlocked propagates so the caller can abort the whole run.
+    TranscriptBlocked and VideoBlocked propagate so the caller can abort
+    the whole run.
     """
     from vidflow.capture.transcript import TranscriptBlocked
+    from vidflow.capture.video import VideoBlocked
     from vidflow.cli_common import OperationResult
 
     try:
@@ -69,7 +71,7 @@ def capture_youtube(
             message=f"Captured YouTube video to {md_path}",
             data={"output_path": str(md_path)},
         )
-    except TranscriptBlocked:
+    except (TranscriptBlocked, VideoBlocked):
         raise
     except Exception as e:
         return OperationResult(

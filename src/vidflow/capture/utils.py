@@ -1,8 +1,6 @@
 """Utility functions for video capture."""
 
-import random
 import re
-import time
 from urllib.parse import parse_qs, urlparse
 
 from dateutil import parser as date_parser
@@ -102,29 +100,6 @@ def is_playlist_url(url: str) -> bool:
     if extract_video_id(url) is not None:
         return False
     return extract_playlist_id(url) is not None
-
-
-def pace_bulk_requests(
-    index: int,
-    total: int,
-    log=None,
-    span: tuple[float, float] = (2.0, 5.0),
-) -> None:
-    """Sleep a jittered interval between videos in a bulk capture run.
-
-    YouTube's caption endpoints rate-limit bursts from one IP; thresholds
-    are undocumented, but one observed trip (2026-08-29): ~40 caption
-    requests (2 per video) at ~2s spacing blocked after video ~20. Normal
-    video downloads add natural spacing; this pause mainly protects runs
-    with tiny downloads (e.g., Shorts). A no-op before the first video or
-    for single-video runs.
-    """
-    if index == 0 or total < 2:
-        return
-    delay = random.uniform(*span)
-    if log:
-        log(f"Pacing {delay:.1f}s before next video (rate-limit courtesy)")
-    time.sleep(delay)
 
 
 def extract_youtube_urls(text: str) -> list[str]:
