@@ -44,6 +44,10 @@ vidflow youtube URL1 URL2 --transcribe
 # Playlist URLs expand to their videos (one note per video);
 # watch URLs carrying a &list= param capture just that video
 vidflow youtube "https://www.youtube.com/playlist?list=PLAYLIST_ID"
+
+# Plan a run offline: which videos would be captured or skipped (already
+# in the output directory), with no downloads or model calls
+vidflow youtube URL1 URL2 --polish --dry-run
 ```
 
 ### Local video capture

@@ -224,7 +224,7 @@ def fetch_video(url: str, output_dir: Path, language: str = "en") -> VideoFetch:
     )
 
 
-def normalize_video_urls(urls: list[str], log=None) -> list[str]:
+def normalize_video_urls(urls: list[str], log=None, expand_playlists: bool = True) -> list[str]:
     """Classify and expand capture inputs into unique video watch URLs.
 
     Accepts bare video IDs (normalized to watch URLs), playlist URLs
@@ -232,7 +232,9 @@ def normalize_video_urls(urls: list[str], log=None) -> list[str]:
     with a note. Duplicates are dropped, order preserved. Watch URLs that
     also carry a list= parameter pass through unchanged — the single-video
     yt-dlp calls pin them with --no-playlist. `log` receives plain-text
-    progress messages when provided.
+    progress messages when provided. With ``expand_playlists=False`` the
+    function makes no network requests and playlist URLs pass through
+    unexpanded (dry runs).
 
     Shared by the ytcapture standalone CLI and vidflow youtube, including
     both clipboard fallbacks.
@@ -255,6 +257,9 @@ def normalize_video_urls(urls: list[str], log=None) -> list[str]:
             _log(f"Video ID: {url} -> {full_url}")
             video_urls.append(full_url)
         elif is_playlist_url(url):
+            if not expand_playlists:
+                video_urls.append(url)
+                continue
             _log(f"Expanding playlist: {url}")
             try:
                 playlist_videos = expand_playlist(url)

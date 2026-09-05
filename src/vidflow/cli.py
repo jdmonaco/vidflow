@@ -78,7 +78,7 @@ def _add_transcribe_args(parser: argparse.ArgumentParser, images: bool = True) -
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be done without processing",
+        help="Show what would be done without processing (no downloads or model calls)",
     )
     parser.add_argument(
         "--estimate-only",
@@ -377,13 +377,21 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     if not urls:  # user declined the clipboard confirmation
         return ExitCode.SUCCESS
 
-    # Normalize bare video IDs, expand playlist URLs, deduplicate
+    # Normalize bare video IDs, expand playlist URLs, deduplicate. A dry
+    # run makes no network requests at all, so playlists stay unexpanded.
     from vidflow.capture.video import normalize_video_urls
 
-    urls = normalize_video_urls(urls, log=lambda msg: print(msg, file=sys.stderr))
+    urls = normalize_video_urls(
+        urls,
+        log=lambda msg: print(msg, file=sys.stderr),
+        expand_playlists=not args.dry_run,
+    )
     if not urls:
         print("No valid video URLs found.", file=sys.stderr)
         return ExitCode.USAGE_ERROR
+
+    if args.dry_run:
+        return _dry_run_youtube(args, urls, output_dir, logger)
 
     from vidflow.capture import capture_youtube
     from vidflow.capture.transcript import TranscriptBlocked
@@ -458,6 +466,95 @@ def cmd_youtube(args: argparse.Namespace) -> int:
 
     output_result(combined, args.json_output, logger)
     return ExitCode.SUCCESS if combined.success else ExitCode.ERROR
+
+
+def _post_process_plan(args: argparse.Namespace) -> dict | None:
+    """Describe the post-processing step a capture run would chain into."""
+    if args.transcribe:
+        return {"step": "transcribe", "model": args.model}
+    if args.polish:
+        return {"step": "polish", "model": args.model}
+    return None
+
+
+def _dry_run_youtube(
+    args: argparse.Namespace,
+    urls: list[str],
+    output_dir: Path,
+    logger,
+) -> int:
+    """Report what `vidflow youtube` would do, without touching the network.
+
+    Each URL is classified offline: playlists are listed as such (expansion
+    happens only on a real run), and video URLs are checked against notes
+    already in the output directory the same way the capture skip does.
+    """
+    from vidflow.capture.core import find_existing_capture
+    from vidflow.capture.utils import extract_video_id, is_playlist_url
+
+    rows = []
+    for url in urls:
+        if is_playlist_url(url):
+            rows.append({"url": url, "video_id": None, "action": "expand"})
+            continue
+        video_id = extract_video_id(url)
+        existing = find_existing_capture(output_dir, video_id) if video_id else None
+        if existing is None:
+            action = "capture"
+        elif args.force:
+            action = "recapture"
+        else:
+            action = "skip"
+        rows.append(
+            {
+                "url": url,
+                "video_id": video_id,
+                "action": action,
+                "existing": str(existing) if existing else None,
+            }
+        )
+
+    counts = {
+        k: sum(1 for r in rows if r["action"] == k)
+        for k in ("capture", "recapture", "skip", "expand")
+    }
+    plan = _post_process_plan(args)
+    parts = [f"would capture {counts['capture'] + counts['recapture']} video(s)"]
+    if counts["skip"]:
+        parts.append(f"skip {counts['skip']} already captured")
+    if counts["expand"]:
+        parts.append(f"expand {counts['expand']} playlist(s) at capture time")
+    if plan:
+        parts.append(f"then {plan['step']} with {plan['model']}")
+    message = "Dry run: " + ", ".join(parts)
+
+    result = OperationResult(
+        success=True,
+        message=message,
+        data={
+            "dry_run": True,
+            "output_dir": str(output_dir),
+            "videos": rows,
+            "post_process": plan,
+        },
+    )
+
+    if not args.json_output:
+        print(f"Dry run (no network requests). Output directory: {output_dir}", file=sys.stderr)
+        for i, row in enumerate(rows, 1):
+            if row["action"] == "expand":
+                detail = "playlist (expanded at capture time)"
+            elif row["action"] == "skip":
+                detail = f"skip, already captured: {Path(row['existing']).name}"
+            elif row["action"] == "recapture":
+                detail = f"recapture (--force), replacing: {Path(row['existing']).name}"
+            else:
+                detail = "capture"
+            print(f"  [{i}/{len(rows)}] {row['video_id'] or '-':<11}  {detail}", file=sys.stderr)
+            print(f"        {row['url']}", file=sys.stderr)
+
+    output_result(result, args.json_output, logger)
+    return ExitCode.SUCCESS
 
 
 def _transcribe_youtube_captures(
@@ -604,6 +701,9 @@ def cmd_local(args: argparse.Namespace) -> int:
     # Resolve fast flag
     fast = args.fast and not args.no_fast
 
+    if args.dry_run:
+        return _dry_run_local(args, output_dir, logger)
+
     for video_path in args.files:
         from vidflow.capture import capture_local
 
@@ -655,6 +755,40 @@ def cmd_local(args: argparse.Namespace) -> int:
 
     output_result(combined, args.json_output, logger)
     return ExitCode.SUCCESS if combined.success else ExitCode.ERROR
+
+
+def _dry_run_local(args: argparse.Namespace, output_dir: Path, logger) -> int:
+    """Report what `vidflow local` would do without probing or capturing.
+
+    Output filenames derive from ffprobe metadata, so they are not
+    predicted here; missing inputs are flagged.
+    """
+    rows = [{"file": str(p), "action": "capture" if p.is_file() else "missing"} for p in args.files]
+    missing = sum(1 for r in rows if r["action"] == "missing")
+    plan = _post_process_plan(args)
+    parts = [f"would capture {len(rows) - missing} file(s)"]
+    if missing:
+        parts.append(f"{missing} missing")
+    if plan:
+        merged = " (merged)" if getattr(args, "merge", False) and len(rows) > 1 else ""
+        parts.append(f"then {plan['step']}{merged} with {plan['model']}")
+    result = OperationResult(
+        success=missing == 0,
+        message="Dry run: " + ", ".join(parts),
+        data={
+            "dry_run": True,
+            "output_dir": str(output_dir),
+            "files": rows,
+            "post_process": plan,
+        },
+        errors=[r["file"] + ": not found" for r in rows if r["action"] == "missing"] or None,
+    )
+    if not args.json_output:
+        print(f"Dry run. Output directory: {output_dir}", file=sys.stderr)
+        for i, row in enumerate(rows, 1):
+            print(f"  [{i}/{len(rows)}] {row['action']:<8} {row['file']}", file=sys.stderr)
+    output_result(result, args.json_output, logger)
+    return ExitCode.SUCCESS if result.success else ExitCode.ERROR
 
 
 def _transcribe_local_captures(
