@@ -42,7 +42,7 @@ class TestYoutubeDryRun:
         rc = vidflow_main(["youtube", "--dry-run", "-o", str(tmp_path), URL_A, URL_B])
         assert rc == 0
         err = capsys.readouterr().err
-        assert "no network requests" in err
+        assert "no capture" in err
         assert "aaaaaaaaaaa" in err and "bbbbbbbbbbb" in err
         assert "would capture 2 video(s)" in caplog.text
 
@@ -58,11 +58,19 @@ class TestYoutubeDryRun:
         vidflow_main(["youtube", "--dry-run", "-f", "-o", str(tmp_path), URL_A])
         assert "recapture (--force)" in capsys.readouterr().err
 
-    def test_playlist_left_unexpanded(self, tmp_path, capsys, caplog):
+    def test_playlist_expanded_with_one_request(self, tmp_path, monkeypatch, caplog):
+        calls = []
+
+        def fake_expand(url):
+            calls.append(url)
+            return [URL_A, URL_B]
+
+        monkeypatch.setattr("vidflow.capture.video.expand_playlist", fake_expand)
+        _existing_note(tmp_path, "bbbbbbbbbbb")
         rc = vidflow_main(["youtube", "--dry-run", "-o", str(tmp_path), PLAYLIST, URL_A])
         assert rc == 0
-        assert "playlist (expanded at capture time)" in capsys.readouterr().err
-        assert "expand 1 playlist(s)" in caplog.text
+        assert calls == [PLAYLIST]
+        assert "would capture 1 video(s), skip 1 already captured" in caplog.text
 
     def test_bare_id_normalized(self, tmp_path, capsys):
         vidflow_main(["youtube", "--dry-run", "-o", str(tmp_path), "aaaaaaaaaaa"])
@@ -77,24 +85,14 @@ class TestYoutubeDryRun:
     def test_json_output(self, tmp_path, capsys):
         _existing_note(tmp_path, "bbbbbbbbbbb")
         rc = vidflow_main(
-            [
-                "youtube",
-                "--dry-run",
-                "--transcribe",
-                "--json",
-                "-o",
-                str(tmp_path),
-                URL_A,
-                URL_B,
-                PLAYLIST,
-            ]
+            ["youtube", "--dry-run", "--transcribe", "--json", "-o", str(tmp_path), URL_A, URL_B]
         )
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
         assert data["success"] is True
         assert data["data"]["dry_run"] is True
         actions = [v["action"] for v in data["data"]["videos"]]
-        assert actions == ["capture", "skip", "expand"]
+        assert actions == ["capture", "skip"]
         assert data["data"]["videos"][1]["existing"].endswith("Old Talk.md")
         assert data["data"]["post_process"]["step"] == "transcribe"
 

@@ -45,8 +45,9 @@ vidflow youtube URL1 URL2 --transcribe
 # watch URLs carrying a &list= param capture just that video
 vidflow youtube "https://www.youtube.com/playlist?list=PLAYLIST_ID"
 
-# Plan a run offline: which videos would be captured or skipped (already
-# in the output directory), with no downloads or model calls
+# Plan a run: which videos would be captured or skipped (already in the
+# output directory). Playlists are expanded (one request each); no
+# video is fetched and no model is called
 vidflow youtube URL1 URL2 --polish --dry-run
 ```
 

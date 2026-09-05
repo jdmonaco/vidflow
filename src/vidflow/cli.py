@@ -377,15 +377,12 @@ def cmd_youtube(args: argparse.Namespace) -> int:
     if not urls:  # user declined the clipboard confirmation
         return ExitCode.SUCCESS
 
-    # Normalize bare video IDs, expand playlist URLs, deduplicate. A dry
-    # run makes no network requests at all, so playlists stay unexpanded.
+    # Normalize bare video IDs, expand playlist URLs, deduplicate. Playlist
+    # expansion (one flat-playlist request per playlist) also runs for a dry
+    # run so the plan can show which members are already captured.
     from vidflow.capture.video import normalize_video_urls
 
-    urls = normalize_video_urls(
-        urls,
-        log=lambda msg: print(msg, file=sys.stderr),
-        expand_playlists=not args.dry_run,
-    )
+    urls = normalize_video_urls(urls, log=lambda msg: print(msg, file=sys.stderr))
     if not urls:
         print("No valid video URLs found.", file=sys.stderr)
         return ExitCode.USAGE_ERROR
@@ -483,20 +480,17 @@ def _dry_run_youtube(
     output_dir: Path,
     logger,
 ) -> int:
-    """Report what `vidflow youtube` would do, without touching the network.
+    """Report what `vidflow youtube` would do, without capturing anything.
 
-    Each URL is classified offline: playlists are listed as such (expansion
-    happens only on a real run), and video URLs are checked against notes
-    already in the output directory the same way the capture skip does.
+    `urls` are already-expanded video URLs. Each is checked against notes
+    already in the output directory the same way the capture skip does; no
+    per-video yt-dlp or model call is made.
     """
     from vidflow.capture.core import find_existing_capture
-    from vidflow.capture.utils import extract_video_id, is_playlist_url
+    from vidflow.capture.utils import extract_video_id
 
     rows = []
     for url in urls:
-        if is_playlist_url(url):
-            rows.append({"url": url, "video_id": None, "action": "expand"})
-            continue
         video_id = extract_video_id(url)
         existing = find_existing_capture(output_dir, video_id) if video_id else None
         if existing is None:
@@ -514,16 +508,11 @@ def _dry_run_youtube(
             }
         )
 
-    counts = {
-        k: sum(1 for r in rows if r["action"] == k)
-        for k in ("capture", "recapture", "skip", "expand")
-    }
+    counts = {k: sum(1 for r in rows if r["action"] == k) for k in ("capture", "recapture", "skip")}
     plan = _post_process_plan(args)
     parts = [f"would capture {counts['capture'] + counts['recapture']} video(s)"]
     if counts["skip"]:
         parts.append(f"skip {counts['skip']} already captured")
-    if counts["expand"]:
-        parts.append(f"expand {counts['expand']} playlist(s) at capture time")
     if plan:
         parts.append(f"then {plan['step']} with {plan['model']}")
     message = "Dry run: " + ", ".join(parts)
@@ -540,11 +529,9 @@ def _dry_run_youtube(
     )
 
     if not args.json_output:
-        print(f"Dry run (no network requests). Output directory: {output_dir}", file=sys.stderr)
+        print(f"Dry run (no capture). Output directory: {output_dir}", file=sys.stderr)
         for i, row in enumerate(rows, 1):
-            if row["action"] == "expand":
-                detail = "playlist (expanded at capture time)"
-            elif row["action"] == "skip":
+            if row["action"] == "skip":
                 detail = f"skip, already captured: {Path(row['existing']).name}"
             elif row["action"] == "recapture":
                 detail = f"recapture (--force), replacing: {Path(row['existing']).name}"
