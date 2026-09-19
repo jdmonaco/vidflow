@@ -68,13 +68,54 @@ def hash_similarity(hash1: imagehash.ImageHash, hash2: imagehash.ImageHash) -> f
     """Similarity in [0, 1] between two 64-bit perceptual hashes.
 
     1.0 means identical hashes; each differing bit subtracts 1/64. A frame is
-    a duplicate when its similarity to the last kept frame is >= the dedup
-    threshold, so a *lower* threshold removes more frames. phash distances
-    are always even (each hash has exactly 32 set bits), so thresholds are
-    effectively quantized in steps of 2/64.
+    a duplicate when its similarity to the first frame of the current run is
+    >= the dedup threshold (see FrameCollector), so a *lower* threshold
+    removes more frames. phash distances are always even (each hash has
+    exactly 32 set bits), so thresholds are effectively quantized in steps
+    of 2/64.
     """
     distance = hash1 - hash2
     return 1.0 - (distance / 64.0)
+
+
+class FrameCollector:
+    """Move extracted frames into ``output_dir``, collapsing runs of near-duplicates.
+
+    Consecutive frames whose phash similarity to the *first* frame of the
+    current run is >= ``threshold`` belong to that run. Each run yields one
+    output frame that carries the run's first timestamp (where its caption
+    span begins) and its *last* image, so a slide that builds up over
+    several samples is represented by its completed state rather than its
+    first bullet. With ``threshold`` None every frame is kept.
+    """
+
+    def __init__(self, output_dir: Path, frame_format: str, threshold: float | None):
+        self.output_dir = output_dir
+        self.frame_format = frame_format
+        self.threshold = threshold
+        self.frames: list[FrameInfo] = []
+        self._anchor: imagehash.ImageHash | None = None
+
+    def add(self, source: Path, timestamp: float) -> bool:
+        """Consume ``source`` (moved, never copied). True if it started a new run."""
+        if self.threshold is not None:
+            try:
+                current = compute_phash(source)
+            except Exception:
+                current = None
+
+            if current is not None and self._anchor is not None and self.frames:
+                if hash_similarity(self._anchor, current) >= self.threshold:
+                    # Same run: newer image replaces the kept file, timestamp stays
+                    shutil.move(str(source), str(self.frames[-1].path))
+                    return False
+
+            self._anchor = current
+
+        final_path = self.output_dir / f"frame-{len(self.frames):04d}.{self.frame_format}"
+        shutil.move(str(source), str(final_path))
+        self.frames.append(FrameInfo(path=final_path, timestamp=timestamp))
+        return True
 
 
 def extract_frames_fast(
@@ -108,9 +149,7 @@ def extract_frames_fast(
         if max_frames and len(timestamps) >= max_frames:
             break
 
-    frames: list[FrameInfo] = []
-    prev_hash: imagehash.ImageHash | None = None
-    frame_index = 0
+    collector = FrameCollector(output_dir, frame_format, dedup_threshold)
 
     for timestamp in timestamps:
         temp_path = output_dir / f"_temp_frame.{frame_format}"
@@ -137,31 +176,12 @@ def extract_frames_fast(
         except Exception:
             continue
 
-        if dedup_threshold is not None:
-            try:
-                current_hash = compute_phash(temp_path)
-            except Exception:
-                current_hash = None
-
-            if current_hash is not None and prev_hash is not None:
-                similarity = hash_similarity(prev_hash, current_hash)
-                if similarity >= dedup_threshold:
-                    temp_path.unlink(missing_ok=True)
-                    continue
-
-            prev_hash = current_hash
-
-        final_name = f"frame-{frame_index:04d}.{frame_format}"
-        final_path = output_dir / final_name
-        shutil.move(str(temp_path), str(final_path))
-
-        frames.append(FrameInfo(path=final_path, timestamp=timestamp))
-        frame_index += 1
+        collector.add(temp_path, timestamp)
 
     temp_path = output_dir / f"_temp_frame.{frame_format}"
     temp_path.unlink(missing_ok=True)
 
-    return frames
+    return collector.frames
 
 
 def extract_frames_from_file(
@@ -231,34 +251,11 @@ def extract_frames_from_file(
         if not temp_frames:
             raise FrameExtractionError("No frames were extracted from video")
 
-        frames: list[FrameInfo] = []
-        prev_hash: imagehash.ImageHash | None = None
-        frame_index = 0
+        collector = FrameCollector(output_dir, frame_format, dedup_threshold)
 
         for i, temp_frame in enumerate(temp_frames):
-            timestamp = float(i * interval)
-
-            if max_frames and len(frames) >= max_frames:
+            if max_frames and len(collector.frames) >= max_frames:
                 break
+            collector.add(temp_frame, float(i * interval))
 
-            if dedup_threshold is not None:
-                try:
-                    current_hash = compute_phash(temp_frame)
-                except Exception:
-                    current_hash = None
-
-                if current_hash is not None and prev_hash is not None:
-                    similarity = hash_similarity(prev_hash, current_hash)
-                    if similarity >= dedup_threshold:
-                        continue
-
-                prev_hash = current_hash
-
-            final_name = f"frame-{frame_index:04d}.{frame_format}"
-            final_path = output_dir / final_name
-            shutil.move(str(temp_frame), str(final_path))
-
-            frames.append(FrameInfo(path=final_path, timestamp=timestamp))
-            frame_index += 1
-
-    return frames
+    return collector.frames

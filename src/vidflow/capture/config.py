@@ -6,8 +6,9 @@ from typing import Any
 
 import yaml
 
-# Frame deduplication: a frame is dropped when its perceptual-hash similarity
-# to the last kept frame is >= this value. 0.80 keeps frames that differ in at
+# Frame deduplication: a frame joins the current run (its image replaces the
+# run's kept frame, the timestamp stays) when its perceptual-hash similarity
+# to the run's first frame is >= this value. 0.80 keeps frames that differ in at
 # least 13 of 64 phash bits, which collapses slide builds, embedded-video motion,
 # and small annotations while still separating distinct slides that share a
 # layout (measured on slide-talk captures: distinct slides sit at >= 16 bits).

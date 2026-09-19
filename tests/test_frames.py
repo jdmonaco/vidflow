@@ -97,3 +97,66 @@ class TestDedupThreshold:
             assert inspect.signature(fn).parameters["dedup_threshold"].default == (
                 DEFAULT_DEDUP_THRESHOLD
             ), fn.__name__
+
+
+class TestFrameCollector:
+    """Near-duplicate runs collapse to the first timestamp with the last image."""
+
+    @staticmethod
+    def _hash(distance_from_base: int):
+        import numpy as np
+        import imagehash
+
+        bits = np.zeros(64, dtype=bool)
+        bits[:32] = True
+        half = distance_from_base // 2
+        bits[:half] = False
+        bits[32 : 32 + half] = True
+        return imagehash.ImageHash(bits.reshape(8, 8))
+
+    def _run(self, tmp_path, threshold, sequence):
+        """sequence: list of (name, distance_from_first_frame_of_video)."""
+        from unittest.mock import patch
+
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        out.mkdir()
+        hashes = {}
+        for name, dist in sequence:
+            (src / f"{name}.jpg").write_bytes(name.encode())
+            hashes[name] = self._hash(dist)
+        with patch(
+            "vidflow.capture.frames.compute_phash",
+            side_effect=lambda p: hashes[p.stem],
+        ):
+            collector = frames.FrameCollector(out, "jpg", threshold)
+            for i, (name, _) in enumerate(sequence):
+                collector.add(src / f"{name}.jpg", float(i * 15))
+        return collector.frames, out
+
+    def test_run_keeps_first_timestamp_and_last_image(self, tmp_path):
+        kept, out = self._run(
+            tmp_path, 0.80, [("a", 0), ("a2", 6), ("a3", 10), ("b", 30), ("b2", 36)]
+        )
+        assert [(f.path.name, f.timestamp) for f in kept] == [
+            ("frame-0000.jpg", 0.0),
+            ("frame-0001.jpg", 45.0),
+        ]
+        assert kept[0].path.read_bytes() == b"a3"
+        assert kept[1].path.read_bytes() == b"b2"
+        assert sorted(p.name for p in out.iterdir()) == ["frame-0000.jpg", "frame-0001.jpg"]
+
+    def test_similarity_is_measured_from_run_start(self, tmp_path):
+        """Drift accumulates against the anchor, so a run ends once it exceeds it."""
+        kept, _ = self._run(tmp_path, 0.80, [("a", 0), ("a2", 8), ("a3", 14)])
+        assert [f.timestamp for f in kept] == [0.0, 30.0]
+        assert kept[0].path.read_bytes() == b"a2"
+
+    def test_threshold_none_keeps_everything(self, tmp_path):
+        kept, _ = self._run(tmp_path, None, [("a", 0), ("a2", 0), ("a3", 0)])
+        assert [f.timestamp for f in kept] == [0.0, 15.0, 30.0]
+
+    def test_source_files_are_consumed(self, tmp_path):
+        _, _ = self._run(tmp_path, 0.80, [("a", 0), ("a2", 4)])
+        assert not any((tmp_path / "src").iterdir())

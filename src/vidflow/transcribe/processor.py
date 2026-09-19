@@ -116,7 +116,7 @@ class VidscribeProcessor:
             else:
                 self.console.print(
                     "[yellow]Warning: EXA_API_KEY is set but exa-py is not installed. "
-                    "Install with: uv pip install 'vidflow[citations]'[/yellow]"
+                    "Reinstall vidflow (exa-py is a core dependency)[/yellow]"
                 )
 
     def estimate_tokens(self, sections: List[TimestampSection]) -> int:

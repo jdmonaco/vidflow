@@ -31,13 +31,13 @@ dependencies = [
     "imagehash>=4.3.0",
     "aikit>=0.1",
     "anthropic>=0.40.0",
+    "exa-py>=1.0.0",
 ]
 
 [tool.uv.sources]
 aikit = { path = "../aikit", editable = true }
 
 [project.optional-dependencies]
-citations = ["exa-py>=1.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
