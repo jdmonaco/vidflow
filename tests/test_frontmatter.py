@@ -61,6 +61,56 @@ class TestLocalLane:
         assert frontmatter["title"] == "Workshop Transcript"
 
 
+class TestYamlRepair:
+    """Model YAML with bare colons or flow openers is repaired, not discarded."""
+
+    def _processor(self, no_warm_unused) -> VidscribeProcessor:
+        processor = VidscribeProcessor(
+            api_key=None, model="primary", json_output=True, text_only=True
+        )
+        processor.local_client = MagicMock()
+        return processor
+
+    def test_repairs_title_with_colon(self, no_warm):
+        # The exact response that produced the "Workshop Transcript" fallback
+        bad = (
+            "title: Physical Intelligence: General-Purpose Robots for the Real World\n"
+            "created: 2026-09-19\n"
+            "tags:\n  - robotics\n"
+            "description: Chelsea Finn's talk: data, scale, and RL for robot policies.\n"
+        )
+        processor = self._processor(no_warm)
+        processor.local_client.chat.completions.create.return_value = _local_response(bad)
+
+        frontmatter = processor.generate_frontmatter("some transcript")
+
+        assert frontmatter["title"] == (
+            "Physical Intelligence: General-Purpose Robots for the Real World"
+        )
+        assert frontmatter["description"].startswith("Chelsea Finn's talk: data")
+        assert frontmatter["tags"] == ["robotics"]
+
+    def test_repair_leaves_valid_yaml_alone(self):
+        assert VidscribeProcessor.repair_yaml_scalars(VALID_YAML) == VALID_YAML
+
+    def test_repair_quotes_flow_openers_and_escapes(self):
+        text = 'title: [Draft] A "quoted" word: here\nkey: plain value\n'
+        repaired = VidscribeProcessor.repair_yaml_scalars(text)
+        import yaml
+
+        data = yaml.safe_load(repaired)
+        assert data["title"] == '[Draft] A "quoted" word: here'
+        assert data["key"] == "plain value"
+
+    def test_fallback_uses_capture_title(self, no_warm):
+        processor = self._processor(no_warm)
+        processor.local_client.chat.completions.create.side_effect = RuntimeError("down")
+
+        frontmatter = processor.generate_frontmatter("t", fallback_title="Capture Title")
+
+        assert frontmatter["title"] == "Capture Title"
+
+
 class TestAnthropicLane:
     """Anthropic lane: quick slot first, session model second, static last."""
 

@@ -80,6 +80,8 @@ vidflow transcribe capture.md --estimate-only
 vidflow transcribe capture.md --dry-run
 ```
 
+The transcript is written as a new note named from the generated title, and the input capture note moves into the sibling `transcripts/` folder as the raw record (next to the raw-transcript JSON from capture), so each folder keeps one note per video. Pass `--keep-capture` to leave the capture note in place.
+
 ### Polish existing captures (text-only)
 
 `polish` is the lightweight alternative to `transcribe`: it sends only the collated caption text (YouTube auto-captions or embedded subtitles) to the configured model for cleanup — speech-to-text errors, filler words, punctuation, paragraphing — without sending any frame images. Sections without caption text pass through unchanged; frames-only captures are rejected (use `transcribe`).

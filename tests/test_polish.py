@@ -242,8 +242,11 @@ class TestInPlacePolish:
         assert result.data["in_place"] is False
         assert fake_process_all["with_frontmatter"] is True
         assert out.exists()
-        # Original file untouched
-        assert "hello uh this is raw caption text" in capture_file.read_text(encoding="utf-8")
+        # Capture note moved to transcripts/ as the raw record
+        archived = capture_file.parent / "transcripts" / capture_file.name
+        assert not capture_file.exists()
+        assert "hello uh this is raw caption text" in archived.read_text(encoding="utf-8")
+        assert result.data["archived"] == [str(archived)]
         # Generated frontmatter merged over original: both survive
         out_content = out.read_text(encoding="utf-8")
         assert "Generated Title" in out_content
@@ -259,8 +262,18 @@ class TestInPlacePolish:
 
         assert result.success
         assert result.data["in_place"] is False
-        # Originals untouched
+        # Both inputs archived
+        archive = tmp_path / "transcripts"
+        assert sorted(p.name for p in archive.iterdir()) == ["capture.md", "capture2.md"]
+        assert not capture_file.exists() and not second.exists()
+
+    def test_keep_capture_leaves_inputs(self, no_warm, fake_process_all, capture_file, tmp_path):
+        out = tmp_path / "polished.md"
+        result = polish_markdown([capture_file], output=out, keep_capture=True, json_output=True)
+        assert result.success
+        assert result.data["archived"] == []
         assert "hello uh this is raw caption text" in capture_file.read_text(encoding="utf-8")
+        assert not (tmp_path / "transcripts").exists()
 
     def test_dry_run_reports_in_place(self, no_warm, capture_file):
         result = polish_markdown([capture_file], dry_run=True, json_output=True)

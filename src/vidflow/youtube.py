@@ -35,6 +35,7 @@ def transcribe_youtube(
     dry_run: bool = False,
     estimate_only: bool = False,
     json_output: bool = False,
+    keep_capture: bool = False,
 ) -> OperationResult:
     """Transcribe a YouTube-captured markdown file.
 
@@ -58,12 +59,15 @@ def transcribe_youtube(
         dry_run: Show what would be done.
         estimate_only: Only estimate tokens.
         json_output: JSON output mode.
+        keep_capture: Leave the capture note in place instead of moving it
+            to transcripts/ once the transcript is written.
 
     Returns:
         OperationResult with transcription results.
     """
     from vidflow.transcribe import (
         VidscribeProcessor,
+        archive_capture,
         determine_output_path,
         load_context_files,
         merge_frontmatter,
@@ -150,14 +154,17 @@ def transcribe_youtube(
         final_md += f"# {title}\n\n"
         final_md += transcript_text
 
+        archived = [] if keep_capture else [archive_capture(input_path.resolve())]
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(final_md, encoding="utf-8")
 
         return OperationResult(
             success=True,
-            message=f"Transcribed {total_sections} YouTube sections to {output_path}",
+            message=f"Transcribed {total_sections} YouTube sections to {output_path}"
+            + (f" (capture moved to {archived[0].parent.name}/)" if archived else ""),
             data={
                 "output_path": str(output_path),
+                "archived": [str(p) for p in archived],
                 "sections": total_sections,
                 "sections_with_transcript": sections_with_transcript,
                 "title": title,

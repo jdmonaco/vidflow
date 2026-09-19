@@ -710,8 +710,51 @@ class VidscribeProcessor:
             response = self.client.messages.create(**kwargs)
             return response.content[0].text
 
-    def generate_frontmatter(self, transcript: str) -> Dict:
-        """Generate YAML frontmatter based on transcript content."""
+    @staticmethod
+    def repair_yaml_scalars(yaml_text: str) -> str:
+        """Quote top-level scalar values a model emitted as bare YAML.
+
+        Models routinely write ``title: Foo: Bar`` (a second ``: `` opens a
+        nested mapping) or ``description: [Draft] ...`` (a ``[`` opens flow
+        syntax that then fails to close). A top-level ``key: value`` whose
+        value is not already a quoted or block scalar, and either contains a
+        mapping separator or does not parse on its own, is wrapped in double
+        quotes with YAML escaping. Valid inline lists, nested blocks, and
+        list items pass through untouched.
+        """
+        fixed = []
+        for line in yaml_text.splitlines():
+            match = re.match(r"^([A-Za-z_][\w-]*):[ \t]+(.+?)[ \t]*$", line)
+            if match:
+                key, value = match.groups()
+                if VidscribeProcessor._yaml_value_needs_quoting(value):
+                    value = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+                    line = f"{key}: {value}"
+            fixed.append(line)
+        trailing = "\n" if yaml_text.endswith("\n") else ""
+        return "\n".join(fixed) + trailing
+
+    @staticmethod
+    def _yaml_value_needs_quoting(value: str) -> bool:
+        if value[0] in "|>":
+            return False  # block scalar indicator
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            return False  # already quoted
+        if ": " in value or value.endswith(":") or " #" in value:
+            return True
+        try:
+            parsed = yaml.safe_load(f"k: {value}")
+        except yaml.YAMLError:
+            return True
+        return not isinstance(parsed, dict) or isinstance(parsed.get("k"), dict)
+
+    def generate_frontmatter(self, transcript: str, fallback_title: Optional[str] = None) -> Dict:
+        """Generate YAML frontmatter based on transcript content.
+
+        ``fallback_title`` (normally the capture note's own title) names the
+        output when the model's YAML cannot be salvaged, so a bad response
+        never yields a generic filename the user then has to rename.
+        """
         # Build the prompt
         prompt_text = FRONTMATTER_PROMPT
         prompt_text += f"\n\nToday's date: {date.today().isoformat()}\n"
@@ -745,7 +788,12 @@ class VidscribeProcessor:
                 yaml_text = re.sub(r"^```(?:yaml)?\s*\n?", "", yaml_text)
                 yaml_text = re.sub(r"\n?```\s*$", "", yaml_text)
 
-            frontmatter = yaml.safe_load(yaml_text)
+            try:
+                frontmatter = yaml.safe_load(yaml_text)
+            except yaml.YAMLError:
+                frontmatter = yaml.safe_load(self.repair_yaml_scalars(yaml_text))
+            if not isinstance(frontmatter, dict):
+                raise ValueError("response is not a YAML mapping")
 
             # Validate required fields
             required_fields = ["title", "tags", "created"]
@@ -760,10 +808,10 @@ class VidscribeProcessor:
                 f"[yellow]Warning: Failed to generate frontmatter ({e}), using fallback[/yellow]"
             )
             return {
-                "title": "Workshop Transcript",
+                "title": fallback_title or "Workshop Transcript",
                 "created": date.today().isoformat(),
-                "tags": ["transcript", "workshop"],
-                "description": "Transcribed workshop recording.",
+                "tags": ["transcript"],
+                "description": "Transcribed recording.",
             }
 
     @staticmethod
@@ -1007,7 +1055,7 @@ class VidscribeProcessor:
                 frontmatter: Dict = {}
                 if with_frontmatter:
                     self.console.print("\n[bold]Generating frontmatter...[/bold]")
-                    frontmatter = self.generate_frontmatter(transcript)
+                    frontmatter = self.generate_frontmatter(transcript, document.title)
 
                 # Clean up checkpoint on successful completion
                 if checkpoint_path and checkpoint_path.exists():

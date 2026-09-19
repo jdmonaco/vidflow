@@ -71,6 +71,31 @@ def handle_existing_output(output_path: Path, input_dir: Path) -> Optional[Path]
             print("Please enter 'y' (overwrite), 'n' (abort), or 'r' (rename)")
 
 
+ARCHIVE_DIRNAME = "transcripts"
+
+
+def archive_capture(capture_path: Path) -> Path:
+    """Move a capture note into its sibling transcripts/ folder and return the new path.
+
+    The transcribed note replaces the capture note as the folder's one
+    note for the video; the raw capture (frames plus unedited caption
+    text) is kept beside the raw-transcript JSON that capture already
+    writes there. An existing file of the same name is never overwritten:
+    a numeric suffix is added instead.
+    """
+    import shutil
+
+    archive_dir = capture_path.parent / ARCHIVE_DIRNAME
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    target = archive_dir / capture_path.name
+    n = 1
+    while target.exists():
+        target = archive_dir / f"{capture_path.stem}-{n}{capture_path.suffix}"
+        n += 1
+    shutil.move(str(capture_path), str(target))
+    return target
+
+
 def determine_output_path(
     input_path: Path, title: str, explicit_output: Optional[Path] = None
 ) -> Path:

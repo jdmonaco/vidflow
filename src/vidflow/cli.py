@@ -86,6 +86,14 @@ def _add_transcribe_args(parser: argparse.ArgumentParser, images: bool = True) -
         action="store_true",
         help="Only estimate token usage",
     )
+    parser.add_argument(
+        "--keep-capture",
+        action="store_true",
+        help=(
+            "Leave the capture note in place when a new transcript file is written "
+            "(default: move it to the sibling transcripts/ folder)"
+        ),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -586,6 +594,7 @@ def _transcribe_youtube_captures(
             dry_run=args.dry_run,
             estimate_only=args.estimate_only,
             json_output=args.json_output,
+            keep_capture=args.keep_capture,
         )
         if not result.success:
             errors.append(result.message)
@@ -624,6 +633,7 @@ def _polish_captures(
             dry_run=args.dry_run,
             estimate_only=args.estimate_only,
             json_output=args.json_output,
+            keep_capture=args.keep_capture,
         )
         if not result.success:
             errors.append(result.message)
@@ -816,6 +826,7 @@ def _transcribe_local_captures(
             dry_run=args.dry_run,
             estimate_only=args.estimate_only,
             json_output=args.json_output,
+            keep_capture=args.keep_capture,
         )
         if not result.success:
             errors.append(result.message)
@@ -838,6 +849,7 @@ def _transcribe_local_captures(
                 dry_run=args.dry_run,
                 estimate_only=args.estimate_only,
                 json_output=args.json_output,
+                keep_capture=args.keep_capture,
             )
             if not result.success:
                 errors.append(result.message)
@@ -870,6 +882,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         estimate_only=args.estimate_only,
         json_output=args.json_output,
+        keep_capture=args.keep_capture,
     )
 
     output_result(result, args.json_output, logger)
@@ -900,6 +913,7 @@ def cmd_polish(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         estimate_only=args.estimate_only,
         json_output=args.json_output,
+        keep_capture=args.keep_capture,
     )
 
     output_result(result, args.json_output, logger)

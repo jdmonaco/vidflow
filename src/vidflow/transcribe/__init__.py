@@ -5,6 +5,8 @@ files (local gateway by default, claude-* models via the Anthropic API), plus
 a text-only polish mode that cleans up raw caption text without sending frames.
 """
 
+from pathlib import Path
+
 from vidflow.transcribe.models import TimestampSection, VidcaptureDocument
 from vidflow.transcribe.parser import (
     merge_vidcapture_documents,
@@ -18,6 +20,7 @@ from vidflow.transcribe.image import (
     resize_image,
 )
 from vidflow.transcribe.output import (
+    archive_capture,
     determine_output_path,
     handle_existing_output,
     load_context_files,
@@ -92,6 +95,23 @@ def merge_frontmatter(original_yaml, generated):
     return merged
 
 
+def _archive_inputs(input_paths, output_path, keep_capture) -> list:
+    """Move the input capture notes to transcripts/ unless told to keep them.
+
+    Runs before the output is written so an output that lands on the
+    input's own path (same title) replaces it cleanly.
+    """
+    if keep_capture:
+        return []
+    return [archive_capture(Path(p)) for p in input_paths]
+
+
+def _archived_note(archived) -> str:
+    if not archived:
+        return ""
+    return f" (capture moved to {archived[0].parent.name}/)"
+
+
 def transcribe_markdown(
     input_paths,
     output=None,
@@ -107,11 +127,14 @@ def transcribe_markdown(
     dry_run=False,
     estimate_only=False,
     json_output=False,
+    keep_capture=False,
 ):
     """Transcribe vidcapture markdown files with OperationResult output.
 
-    Multiple inputs are merged into a single output.
-    Used by the vidflow CLI layer.
+    Multiple inputs are merged into a single output. Each input capture
+    note is then moved into its sibling transcripts/ folder (see
+    ``archive_capture``) unless ``keep_capture`` is set, so the folder
+    holds one note per video. Used by the vidflow CLI layer.
     """
     import os
 
@@ -189,14 +212,17 @@ def transcribe_markdown(
             final_md += f"# {title}\n\n"
         final_md += transcript_text
 
+        archived = _archive_inputs(input_paths, output_path, keep_capture)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(final_md, encoding="utf-8")
 
         return OperationResult(
             success=True,
-            message=f"Transcribed {total_sections} sections to {output_path}",
+            message=f"Transcribed {total_sections} sections to {output_path}"
+            + _archived_note(archived),
             data={
                 "output_path": str(output_path),
+                "archived": [str(p) for p in archived],
                 "sections": total_sections,
                 "title": title,
                 "model": model,
@@ -225,6 +251,7 @@ def polish_markdown(
     dry_run=False,
     estimate_only=False,
     json_output=False,
+    keep_capture=False,
 ):
     """Polish raw caption text in vidcapture markdown files (text-only).
 
@@ -237,7 +264,9 @@ def polish_markdown(
     section text is replaced while the file's frontmatter, title, and any
     preamble (video embed, description) are preserved verbatim, and no
     frontmatter is generated. Passing -o/--output, or multiple inputs
-    (always merged), writes a new file with generated frontmatter instead.
+    (always merged), writes a new file with generated frontmatter instead,
+    and the input capture notes move to transcripts/ unless
+    ``keep_capture`` is set (see ``archive_capture``).
     """
     from vidflow.cli_common import OperationResult
 
@@ -330,6 +359,7 @@ def polish_markdown(
             final_md = f"{prefix}\n\n{transcript_text}"
             document.source_path.write_text(final_md, encoding="utf-8")
             output_path = document.source_path
+            archived = []
         else:
             frontmatter_data = merge_frontmatter(document.frontmatter, frontmatter_data)
             if title:
@@ -352,6 +382,7 @@ def polish_markdown(
                 final_md += f"# {title}\n\n"
             final_md += transcript_text
 
+            archived = _archive_inputs(input_paths, output_path, keep_capture)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(final_md, encoding="utf-8")
 
@@ -360,9 +391,11 @@ def polish_markdown(
             message=(
                 f"Polished {sections_with_text} of {total_sections} sections "
                 f"{'in place' if in_place else 'to new file'}: {output_path}"
+                + _archived_note(archived)
             ),
             data={
                 "output_path": str(output_path),
+                "archived": [str(p) for p in archived],
                 "sections": total_sections,
                 "sections_with_text": sections_with_text,
                 "in_place": in_place,
