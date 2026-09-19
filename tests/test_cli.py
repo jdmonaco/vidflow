@@ -111,3 +111,54 @@ class TestImports:
         from vidflow.youtube import transcribe_youtube
 
         assert callable(transcribe_youtube)
+
+
+class TestCaptureDefaultsFromConfig:
+    """vidflow youtube/local take capture defaults from the config file."""
+
+    @pytest.fixture
+    def config_file(self, tmp_path, monkeypatch):
+        from vidflow.capture import config as cfg
+
+        path = tmp_path / "config.yml"
+        monkeypatch.setattr(cfg, "get_config_path", lambda: path)
+        cfg.clear_config_cache()
+        yield path
+        cfg.clear_config_cache()
+
+    def test_builtin_defaults(self, config_file):
+        from vidflow.capture.config import DEFAULT_DEDUP_THRESHOLD
+        from vidflow.cli import build_parser
+
+        config_file.write_text("")
+        args = build_parser().parse_args(["youtube", "x"])
+        assert args.dedup_threshold == DEFAULT_DEDUP_THRESHOLD
+        assert args.interval == 15
+        args = build_parser().parse_args(["local", "x.mp4"])
+        assert args.dedup_threshold == DEFAULT_DEDUP_THRESHOLD
+        assert args.fast is True
+
+    def test_config_overrides_defaults(self, config_file):
+        from vidflow.cli import build_parser
+
+        config_file.write_text("dedup_threshold: 0.7\ninterval: 30\nfast: false\n")
+        args = build_parser().parse_args(["youtube", "x"])
+        assert args.dedup_threshold == 0.7
+        assert args.interval == 30
+        args = build_parser().parse_args(["local", "x.mp4"])
+        assert args.fast is False
+
+    def test_cli_overrides_config(self, config_file):
+        from vidflow.cli import build_parser
+
+        config_file.write_text("dedup_threshold: 0.7\n")
+        args = build_parser().parse_args(["youtube", "x", "--dedup-threshold", "0.9"])
+        assert args.dedup_threshold == 0.9
+
+    def test_help_shows_config_default(self, config_file, capsys):
+        from vidflow.cli import main
+
+        config_file.write_text("dedup_threshold: 0.7\n")
+        with pytest.raises(SystemExit):
+            main(["youtube", "--help"])
+        assert "(default: 0.7)" in capsys.readouterr().out

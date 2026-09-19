@@ -48,3 +48,52 @@ class TestVfrOutputArgs:
 
     def test_unknown_version_defaults_to_fps_mode(self):
         assert self._args_for((0, 0)) == ["-fps_mode", "vfr"]
+
+
+class TestDedupThreshold:
+    """Semantics of hash_similarity and the dedup threshold."""
+
+    def _hashes(self, distance: int):
+        import numpy as np
+        import imagehash
+
+        a = np.zeros(64, dtype=bool)
+        a[:32] = True
+        b = a.copy()
+        # Flip distance/2 set bits off and distance/2 clear bits on
+        half = distance // 2
+        b[:half] = False
+        b[32 : 32 + half] = True
+        return imagehash.ImageHash(a.reshape(8, 8)), imagehash.ImageHash(b.reshape(8, 8))
+
+    def test_identical_hashes_are_fully_similar(self):
+        h1, h2 = self._hashes(0)
+        assert frames.hash_similarity(h1, h2) == 1.0
+
+    def test_each_differing_bit_costs_one_64th(self):
+        h1, h2 = self._hashes(16)
+        assert frames.hash_similarity(h1, h2) == 0.75
+
+    def test_lower_threshold_drops_more_frames(self):
+        """A frame is a duplicate when similarity >= threshold."""
+        h1, h2 = self._hashes(10)  # similarity 0.84375
+        sim = frames.hash_similarity(h1, h2)
+        assert sim >= 0.80  # dropped at the default
+        assert sim < 0.95  # kept at the old default
+
+    def test_default_threshold_is_single_sourced(self):
+        import inspect
+
+        from vidflow.capture import capture_local, capture_youtube
+        from vidflow.capture.config import DEFAULT_CONFIG, DEFAULT_DEDUP_THRESHOLD
+
+        assert DEFAULT_CONFIG["dedup_threshold"] == DEFAULT_DEDUP_THRESHOLD
+        for fn in (
+            frames.extract_frames_fast,
+            frames.extract_frames_from_file,
+            capture_youtube,
+            capture_local,
+        ):
+            assert inspect.signature(fn).parameters["dedup_threshold"].default == (
+                DEFAULT_DEDUP_THRESHOLD
+            ), fn.__name__

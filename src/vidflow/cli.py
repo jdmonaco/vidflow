@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from vidflow import __version__
+from vidflow.capture.config import DEDUP_THRESHOLD_HELP, get_config_for_defaults
 from vidflow.cli_common import (
     ExitCode,
     OperationResult,
@@ -89,6 +90,10 @@ def _add_transcribe_args(parser: argparse.ArgumentParser, images: bool = True) -
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with all subcommands."""
+    # Capture defaults come from ~/.config/vidflow/config.yml (merged over
+    # DEFAULT_CONFIG), the same source the standalone ytcapture/vidcapture use.
+    _cfg = get_config_for_defaults()
+
     parser = argparse.ArgumentParser(
         prog="vidflow",
         description="Unified video capture and transcription CLI",
@@ -135,35 +140,37 @@ Examples:
     yt_parser.add_argument(
         "--interval",
         type=int,
-        default=15,
-        help="Frame extraction interval in seconds (default: 15)",
+        default=_cfg["interval"],
+        help=f"Frame extraction interval in seconds (default: {_cfg['interval']})",
     )
     yt_parser.add_argument(
         "--max-frames",
         type=int,
+        default=_cfg["max_frames"],
         help="Maximum number of frames to extract",
     )
     yt_parser.add_argument(
         "--frame-format",
         choices=["jpg", "png"],
-        default="jpg",
-        help="Frame image format (default: jpg)",
+        default=_cfg["frame_format"],
+        help=f"Frame image format (default: {_cfg['frame_format']})",
     )
     yt_parser.add_argument(
         "--language",
-        default="en",
-        help="Transcript language code (default: en)",
+        default=_cfg["language"],
+        help=f"Transcript language code (default: {_cfg['language']})",
     )
     yt_parser.add_argument(
         "--prefer-manual",
         action="store_true",
+        default=_cfg["prefer_manual"],
         help="Only use manually created transcripts",
     )
     yt_parser.add_argument(
         "--dedup-threshold",
         type=float,
-        default=0.95,
-        help="Similarity threshold for frame deduplication (default: 0.95)",
+        default=_cfg["dedup_threshold"],
+        help=DEDUP_THRESHOLD_HELP.format(_cfg["dedup_threshold"]),
     )
     yt_parser.add_argument(
         "--no-dedup",
@@ -173,11 +180,13 @@ Examples:
     yt_parser.add_argument(
         "--keep-video",
         action="store_true",
+        default=_cfg["keep_video"],
         help="Keep downloaded video file",
     )
     yt_parser.add_argument(
         "--no-ai-title",
         action="store_true",
+        default=not _cfg["ai_title"],
         help="Skip AI title generation",
     )
     yt_parser.add_argument(
@@ -212,25 +221,26 @@ Examples:
     local_parser.add_argument(
         "--interval",
         type=int,
-        default=15,
-        help="Frame extraction interval in seconds (default: 15)",
+        default=_cfg["interval"],
+        help=f"Frame extraction interval in seconds (default: {_cfg['interval']})",
     )
     local_parser.add_argument(
         "--max-frames",
         type=int,
+        default=_cfg["max_frames"],
         help="Maximum number of frames to extract",
     )
     local_parser.add_argument(
         "--frame-format",
         choices=["jpg", "png"],
-        default="jpg",
-        help="Frame image format (default: jpg)",
+        default=_cfg["frame_format"],
+        help=f"Frame image format (default: {_cfg['frame_format']})",
     )
     local_parser.add_argument(
         "--dedup-threshold",
         type=float,
-        default=0.95,
-        help="Similarity threshold for frame deduplication (default: 0.95)",
+        default=_cfg["dedup_threshold"],
+        help=DEDUP_THRESHOLD_HELP.format(_cfg["dedup_threshold"]),
     )
     local_parser.add_argument(
         "--no-dedup",
@@ -240,7 +250,8 @@ Examples:
     local_parser.add_argument(
         "--fast",
         action="store_true",
-        help="Use fast keyframe-seeking extraction",
+        default=_cfg["fast"],
+        help="Use fast keyframe-seeking extraction" + (" (default)" if _cfg["fast"] else ""),
     )
     local_parser.add_argument(
         "--no-fast",

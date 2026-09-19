@@ -16,6 +16,7 @@ from rich.table import Table
 
 from vidflow import __version__
 from vidflow.capture.config import (
+    DEDUP_THRESHOLD_HELP,
     config_was_auto_created,
     get_config_for_defaults,
     get_config_path,
@@ -39,6 +40,7 @@ from vidflow.capture.video import (
 
 # Load config at module level for CLI option defaults
 _cfg = get_config_for_defaults()
+
 
 console = Console()
 
@@ -146,8 +148,8 @@ Examples:
     parser.add_argument(
         "--dedup-threshold",
         type=float,
-        default=_cfg.get("dedup_threshold", 0.85),
-        help=f"Similarity threshold for frame deduplication (default: {_cfg.get('dedup_threshold', 0.85)})",
+        default=_cfg["dedup_threshold"],
+        help=DEDUP_THRESHOLD_HELP.format(_cfg["dedup_threshold"]),
     )
     parser.add_argument("--no-dedup", action="store_true", help="Disable frame deduplication")
     parser.add_argument(
@@ -320,8 +322,8 @@ Examples:
     parser.add_argument(
         "--dedup-threshold",
         type=float,
-        default=_cfg.get("dedup_threshold", 0.85),
-        help=f"Similarity threshold for frame deduplication (default: {_cfg.get('dedup_threshold', 0.85)})",
+        default=_cfg["dedup_threshold"],
+        help=DEDUP_THRESHOLD_HELP.format(_cfg["dedup_threshold"]),
     )
     parser.add_argument("--no-dedup", action="store_true", help="Disable frame deduplication")
     parser.add_argument(

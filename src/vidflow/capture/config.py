@@ -6,12 +6,26 @@ from typing import Any
 
 import yaml
 
+# Frame deduplication: a frame is dropped when its perceptual-hash similarity
+# to the last kept frame is >= this value. 0.80 keeps frames that differ in at
+# least 13 of 64 phash bits, which collapses slide builds, embedded-video motion,
+# and small annotations while still separating distinct slides that share a
+# layout (measured on slide-talk captures: distinct slides sit at >= 16 bits).
+# Lower values drop more frames; 1.0 drops only exact hash matches.
+DEFAULT_DEDUP_THRESHOLD = 0.80
+
+# --dedup-threshold help text shared by every capture CLI; format() with the default
+DEDUP_THRESHOLD_HELP = (
+    "Drop a frame whose perceptual similarity to the last kept frame is at least "
+    "this value, 0.0-1.0; lower values remove more frames (default: {})"
+)
+
 # Default configuration values
 DEFAULT_CONFIG: dict[str, Any] = {
     "interval": 15,
     "max_frames": None,
     "frame_format": "jpg",
-    "dedup_threshold": 0.85,
+    "dedup_threshold": DEFAULT_DEDUP_THRESHOLD,
     # ytcapture-specific
     "language": "en",
     "prefer_manual": False,
@@ -33,7 +47,7 @@ DEFAULT_CONFIG_YAML = """\
 interval: 15           # Seconds between frames [15]
 # max_frames:          # Maximum frames to extract [none - no limit]
 frame_format: jpg      # jpg or png [jpg]
-dedup_threshold: 0.85  # 0.0-1.0, higher = more aggressive dedup [0.85]
+dedup_threshold: 0.80  # Drop frames at least this similar to the last kept frame; lower = more aggressive [0.80]
 
 # YouTube capture defaults
 language: en           # Transcript language code [en]

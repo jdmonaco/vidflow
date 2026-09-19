@@ -11,6 +11,8 @@ from pathlib import Path
 import imagehash
 from PIL import Image
 
+from vidflow.capture.config import DEFAULT_DEDUP_THRESHOLD
+
 
 @dataclass
 class FrameInfo:
@@ -63,7 +65,14 @@ def compute_phash(image_path: Path) -> imagehash.ImageHash:
 
 
 def hash_similarity(hash1: imagehash.ImageHash, hash2: imagehash.ImageHash) -> float:
-    """Compute similarity between two perceptual hashes."""
+    """Similarity in [0, 1] between two 64-bit perceptual hashes.
+
+    1.0 means identical hashes; each differing bit subtracts 1/64. A frame is
+    a duplicate when its similarity to the last kept frame is >= the dedup
+    threshold, so a *lower* threshold removes more frames. phash distances
+    are always even (each hash has exactly 32 set bits), so thresholds are
+    effectively quantized in steps of 2/64.
+    """
     distance = hash1 - hash2
     return 1.0 - (distance / 64.0)
 
@@ -75,7 +84,7 @@ def extract_frames_fast(
     interval: int = 15,
     max_frames: int | None = None,
     frame_format: str = "jpg",
-    dedup_threshold: float | None = 0.85,
+    dedup_threshold: float | None = DEFAULT_DEDUP_THRESHOLD,
 ) -> list[FrameInfo]:
     """Extract frames using fast keyframe seeking."""
     if not check_ffmpeg():
@@ -161,7 +170,7 @@ def extract_frames_from_file(
     interval: int = 15,
     max_frames: int | None = None,
     frame_format: str = "jpg",
-    dedup_threshold: float | None = 0.85,
+    dedup_threshold: float | None = DEFAULT_DEDUP_THRESHOLD,
 ) -> list[FrameInfo]:
     """Extract frames from a local video file with integrated deduplication."""
     if not check_ffmpeg():

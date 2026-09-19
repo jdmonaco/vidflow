@@ -7,6 +7,8 @@ Obsidian-compatible markdown notes.
 from pathlib import Path
 from typing import Optional
 
+from vidflow.capture.config import DEFAULT_DEDUP_THRESHOLD
+
 __all__ = [
     "process_video",
     "process_local_video",
@@ -37,7 +39,7 @@ def capture_youtube(
     frame_format: str = "jpg",
     language: str = "en",
     prefer_manual: bool = False,
-    dedup_threshold: float = 0.95,
+    dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
     no_dedup: bool = False,
     keep_video: bool = False,
     no_ai_title: bool = False,
@@ -97,7 +99,7 @@ def capture_local(
     interval: int = 15,
     max_frames: int | None = None,
     frame_format: str = "jpg",
-    dedup_threshold: float = 0.95,
+    dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD,
     no_dedup: bool = False,
     fast: bool = False,
     force: bool = False,
