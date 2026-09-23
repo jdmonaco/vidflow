@@ -498,34 +498,19 @@ class VidscribeProcessor:
             messages, api_task, progress, tools=tools
         )
 
-        # Handle tool use loop (Exa citation searches)
+        # Handle tool use loop (Exa citation searches). Branch on the
+        # presence of tool_use blocks rather than stop_reason: Fable 5.1 has
+        # been observed to return tool_use blocks with stop_reason "end_turn",
+        # and an unanswered tool call yields an empty batch.
         tool_call_count = 0
-        while (
-            stop_reason == "tool_use"
-            and self.exa_enabled
-            and tool_call_count < MAX_TOOL_CALLS_PER_BATCH
-        ):
-            # Extract tool_use blocks from the response
+        while self.exa_enabled and tool_call_count < MAX_TOOL_CALLS_PER_BATCH:
             tool_use_blocks = [block for block in final_message.content if block.type == "tool_use"]
-
             if not tool_use_blocks:
                 break
 
-            # Reconstruct assistant message with all content blocks
-            assistant_content = []
-            for block in final_message.content:
-                if block.type == "text":
-                    assistant_content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    assistant_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
-            messages.append({"role": "assistant", "content": assistant_content})
+            # Echo the assistant turn back verbatim: thinking blocks must
+            # precede tool_use blocks when continuing a tool-use turn
+            messages.append({"role": "assistant", "content": final_message.content})
 
             # Execute each tool call and collect results
             tool_results = []
@@ -578,21 +563,8 @@ class VidscribeProcessor:
                 f"(attempt {continuation_count}/{max_continuations})[/yellow]"
             )
 
-            # Serialize the API-returned content blocks as an assistant message
-            assistant_content = []
-            for block in final_message.content:
-                if block.type == "text":
-                    assistant_content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    assistant_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
-            messages.append({"role": "assistant", "content": assistant_content})
+            # Echo the API-returned content blocks back verbatim
+            messages.append({"role": "assistant", "content": final_message.content})
 
             # Append a user-role continuation prompt
             messages.append(
