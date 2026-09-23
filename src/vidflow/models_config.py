@@ -7,6 +7,7 @@ quality escape hatch.
 """
 
 import argparse
+import re
 
 # --- Local gateway slots (the default lane) ---
 
@@ -19,23 +20,33 @@ MODEL_OPUS = "claude-opus-5"
 MODEL_SONNET = "claude-sonnet-5"
 MODEL_HAIKU = "claude-haiku-4-5"
 
-# Anthropic models that reject non-default temperature/top_p/top_k with
-# HTTP 400: the 5-family and Opus 4.7/4.8. The API call must omit these
-# params when using a model in this set. Local slots all accept temperature.
-FIXED_SAMPLING_MODELS = frozenset(
-    {
-        "claude-opus-5",
-        "claude-sonnet-5",
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-    }
-)
+# Anthropic models that reject temperature/top_p/top_k with HTTP 400: the
+# 5-family (Opus/Sonnet/Fable/Mythos) and Opus 4.7/4.8. Every model at 4.6
+# or earlier accepts them. Unknown claude-* ids are treated as fixed-sampling
+# because omitting the param is always valid while sending it to a newer
+# model is not. Local slots all accept temperature.
+LAST_SAMPLING_GENERATION = (4, 6)
+
+_VERSIONED_MODEL = re.compile(r"^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$")
+_LEGACY_MODEL = re.compile(r"^claude-3(?:-|$)")  # claude-3-5-sonnet-20241022 etc.
 
 
 def model_accepts_temperature(model: str) -> bool:
-    """True if the model accepts non-default temperature/top_p/top_k params."""
-    return model not in FIXED_SAMPLING_MODELS
+    """True if the model accepts non-default temperature/top_p/top_k params.
+
+    Anthropic removed sampling parameters starting with Opus 4.7 and the
+    5-family; the SDK (>=1.0) no longer exposes them as keyword arguments,
+    so callers must pass them via ``extra_body`` when this returns True.
+    """
+    if not model.startswith("claude-"):
+        return True  # local gateway slots
+    if _LEGACY_MODEL.match(model):
+        return True
+    m = _VERSIONED_MODEL.match(model)
+    if m:
+        generation = (int(m.group(1)), int(m.group(2) or 0))
+        return generation <= LAST_SAMPLING_GENERATION
+    return False  # fable-*, mythos-*, and anything unrecognised
 
 
 # --- Transcription defaults ---

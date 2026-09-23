@@ -179,7 +179,9 @@ class VidscribeProcessor:
                     messages=messages,
                 )
                 if self.supports_temperature:
-                    stream_kwargs["temperature"] = self.temperature
+                    # anthropic>=1.0 dropped the temperature kwarg; extra_body
+                    # merges into the request JSON on every SDK version
+                    stream_kwargs["extra_body"] = {"temperature": self.temperature}
                 if tools:
                     stream_kwargs["tools"] = tools
 
@@ -706,7 +708,7 @@ class VidscribeProcessor:
                 messages=messages,
             )
             if self.supports_temperature:
-                kwargs["temperature"] = 0.1
+                kwargs["extra_body"] = {"temperature": 0.1}
             response = self.client.messages.create(**kwargs)
             return response.content[0].text
 

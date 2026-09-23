@@ -144,8 +144,9 @@ class TestAnthropicLane:
 
         call_kwargs = processor.client.messages.create.call_args.kwargs
         assert call_kwargs["model"] == "claude-opus-5"
-        # Fixed-sampling model: temperature must be omitted
+        # Fixed-sampling model: temperature must be omitted entirely
         assert "temperature" not in call_kwargs
+        assert "extra_body" not in call_kwargs
         assert frontmatter["title"] == "Test Talk on Neural Data"
 
     def test_fallback_passes_temperature_when_supported(self, no_warm):
@@ -158,7 +159,9 @@ class TestAnthropicLane:
         processor.generate_frontmatter("some transcript")
 
         call_kwargs = processor.client.messages.create.call_args.kwargs
-        assert call_kwargs["temperature"] == 0.1
+        # Never a kwarg (removed in anthropic>=1.0); always via extra_body
+        assert "temperature" not in call_kwargs
+        assert call_kwargs["extra_body"] == {"temperature": 0.1}
 
     def test_both_lanes_failing_uses_static_fallback(self, no_warm):
         processor = self._processor(no_warm)

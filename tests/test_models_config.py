@@ -4,7 +4,6 @@ import aikit
 
 from vidflow.models_config import (
     DEFAULT_MODEL,
-    FIXED_SAMPLING_MODELS,
     LOCAL_QUICK,
     MODEL_HAIKU,
     MODEL_OPUS,
@@ -31,20 +30,40 @@ def test_escape_hatch_models_are_current():
 
 
 def test_five_family_rejects_temperature():
-    for model in (MODEL_OPUS, MODEL_SONNET, "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7"):
-        assert model in FIXED_SAMPLING_MODELS
-        assert not model_accepts_temperature(model)
+    for model in (
+        MODEL_OPUS,
+        MODEL_SONNET,
+        "claude-opus-5-5",
+        "claude-fable-5",
+        "claude-fable-5-1",
+        "claude-mythos-5-1",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+    ):
+        assert not model_accepts_temperature(model), model
 
 
-def test_other_models_accept_temperature():
-    assert model_accepts_temperature(MODEL_HAIKU)
-    assert model_accepts_temperature("claude-opus-4-6")
-    # Local slots always accept temperature
+def test_pre_47_models_accept_temperature():
+    for model in (
+        MODEL_HAIKU,
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-opus-4-5-20251101",
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-1-20250805",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-7-sonnet-latest",
+    ):
+        assert model_accepts_temperature(model), model
+
+
+def test_local_slots_accept_temperature():
     assert model_accepts_temperature(DEFAULT_MODEL)
     assert model_accepts_temperature(LOCAL_QUICK)
 
 
-def test_unknown_model_defaults_to_accepting_temperature():
-    # Conservative default: unknown models assumed to accept temperature.
-    # If a future fixed-sampling model ships, it must be added explicitly.
-    assert model_accepts_temperature("claude-some-future-model")
+def test_unknown_anthropic_model_omits_temperature():
+    # Safe default: omitting sampling params is always valid; sending them to
+    # a newer model is not. A claude-* id we cannot parse gets no temperature.
+    assert not model_accepts_temperature("claude-some-future-model")
+    assert not model_accepts_temperature("claude-opus-6")
