@@ -84,10 +84,14 @@ Describe ONLY relevant presented visual content: slide bullet points, titles, gr
 descriptions, diagrams, equations, tables, or other substantive displayed material. Write in
 concise narrative form — key points and what figures convey, not a visual inventory.
 
+Format the entire visual content description as a Markdown blockquote: prefix every line of
+it with "> " so it is visually distinct from the transcript text that follows. Keep it to a
+single blockquote paragraph. Never put speaker text inside the blockquote.
+
 - Do NOT describe faces, people, webcam feeds, or video call participant thumbnails.
 - Do NOT describe screen chrome, window borders, recording indicators, or UI elements.
 - If the frame shows nothing of visual interest (e.g., only a speaker's face or a blank
-  screen), write "[No slide content visible]" and move on.
+  screen), write "> [No slide content visible]" and move on.
 
 ### 2. Speaker Text
 
@@ -142,13 +146,13 @@ their text. Only start a new speaker paragraph when the speaker changes.
 
 <output-format>
 Output the completed template sections. Keep exact timestamp headings and image embeds.
-After each image embed, on a new line, add the visual content description (if any), then
-a blank line, then the enhanced speaker text (if any). Use this structure:
+After each image embed, on a new line, add the visual content description as a blockquote
+(if any), then a blank line, then the enhanced speaker text (if any). Use this structure:
 
 ## HH:MM:SS
 ![[image_embed]]
 
-[Visual content description here, or "[No slide content visible]"]
+> Visual content description here, or "> [No slide content visible]"
 
 **Speaker Name**: Enhanced transcript text here...
 </output-format>
