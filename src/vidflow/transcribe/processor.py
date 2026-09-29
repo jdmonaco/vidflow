@@ -11,6 +11,7 @@ import time
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import aikit
 import anthropic
@@ -38,6 +39,7 @@ from vidflow.transcribe.prompts import (
     SEARCH_BUDGET_EXHAUSTED,
     SEARCH_FINAL_INSTRUCTION,
     SEARCH_MAX_REPEATS,
+    SEARCH_NO_CANONICAL_URL,
     SEARCH_NO_RESULTS,
     SEARCH_REPEAT_PREFIX,
     SEARCH_REPEAT_THRESHOLD,
@@ -391,26 +393,59 @@ class VidscribeProcessor:
         self._batch_queries.append((tokens, query, result))
         return result
 
+    # Hosts that are the search index's own landing pages, not the paper
+    _INDEX_HOSTS = ("exa.ai",)
+    _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>)\]]+)")
+
+    @classmethod
+    def _is_canonical_url(cls, url: str | None) -> bool:
+        """True for a publisher, DOI, preprint, or author-hosted link."""
+        if not url:
+            return False
+        host = urlparse(url).netloc.lower()
+        return not any(host == h or host.endswith("." + h) for h in cls._INDEX_HOSTS)
+
     def _execute_exa_search(self, query: str) -> str:
-        """Execute an Exa academic paper search and return formatted result."""
+        """Execute an Exa academic paper search and return formatted result.
+
+        Prefers the first result with a canonical URL; an index landing page
+        (exa.ai/library/...) is reported without a URL. A DOI found in any
+        result's excerpt is reported as a doi.org link.
+        """
         try:
             results = self.exa_client.search_and_contents(
                 query,
                 type="auto",
                 category="research paper",
-                num_results=1,
+                num_results=3,
                 text={"max_characters": 500},
             )
 
             if not results.results:
                 return SEARCH_NO_RESULTS.format(query=query)
 
-            r = results.results[0]
+            r = next(
+                (x for x in results.results if self._is_canonical_url(x.url)),
+                results.results[0],
+            )
+            doi = next(
+                (
+                    m.group(1)
+                    for x in results.results
+                    for m in [self._DOI_RE.search(x.text or "")]
+                    if m
+                ),
+                None,
+            )
             parts = []
             if r.title:
                 parts.append(f"Title: {r.title}")
-            if r.url:
+            if self._is_canonical_url(r.url):
                 parts.append(f"URL: {r.url}")
+            else:
+                parts.append(SEARCH_NO_CANONICAL_URL)
+            if doi:
+                parts.append(f"DOI: https://doi.org/{doi.rstrip('.')}")
             if r.author:
                 parts.append(f"Author: {r.author}")
             if r.published_date:

@@ -32,6 +32,10 @@ SEARCH_REPEAT_PREFIX = (
     "Do not search again with reworded queries; use the result below, cite the "
     "reference as it appears on the slide, or omit it.\n\n"
 )
+SEARCH_NO_CANONICAL_URL = (
+    "No canonical URL available (the index only has its own landing page); "
+    "cite without a URL unless a DOI is given below."
+)
 SEARCH_BUDGET_EXHAUSTED = (
     "The citation search budget for this batch is exhausted; no further searches "
     "will be answered. Write the completed transcript now, citing unresolved "
@@ -92,6 +96,11 @@ Guidelines:
 - Deduplicate: if a reference appeared in a previous frame, do not re-cite it
 - If a search returns no useful result, include the reference as-is with "[citation not found]"
 - Do not fabricate citation details — use only what the search returns or what is visible on screen
+- URLs: give ONLY a canonical link — the DOI (https://doi.org/...) or the publisher's or
+  journal's article page. Preprint servers (arXiv, bioRxiv, PsyArXiv, OSF) and author-hosted
+  manuscript copies are also fine. NEVER cite an exa.ai link (e.g. exa.ai/library/...); that is
+  the search index's own landing page, not the paper. If the search result carries no canonical
+  URL, omit the URL from the citation rather than substituting one.
 </citation-search>
 """
 
