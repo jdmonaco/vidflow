@@ -13,6 +13,30 @@ SUPPORTED_FORMATS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 # Maximum tool calls per batch (safety limit for Exa citation search)
 MAX_TOOL_CALLS_PER_BATCH = 20
 
+# Jaccard overlap of query tokens above which a search is a repeat of an
+# earlier one in the same batch (see VidscribeProcessor._search_with_dedup)
+SEARCH_REPEAT_THRESHOLD = 0.5
+
+# Tool results and instructions that keep the model from looping on searches
+SEARCH_NO_RESULTS = (
+    "No results found for: {query}. Do not retry this reference with reworded "
+    "queries; cite it as it appears on the slide or omit the citation."
+)
+SEARCH_REPEAT_PREFIX = (
+    "This reference was already searched in this batch (previous query: {previous}). "
+    "Do not search again with reworded queries; use the result below, cite the "
+    "reference as it appears on the slide, or omit it.\n\n"
+)
+SEARCH_BUDGET_EXHAUSTED = (
+    "The citation search budget for this batch is exhausted; no further searches "
+    "will be answered. Write the completed transcript now, citing unresolved "
+    "references as they appear on the slides."
+)
+SEARCH_FINAL_INSTRUCTION = (
+    "The citation search budget is exhausted. Do not call any tools. "
+    "Output the completed template sections now."
+)
+
 # Exa search tool schema for Claude Messages API
 EXA_SEARCH_TOOL = {
     "name": "exa_search",

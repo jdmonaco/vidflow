@@ -35,6 +35,11 @@ from vidflow.transcribe.prompts import (
     MAX_REQUEST_SIZE_MB,
     MAX_TOOL_CALLS_PER_BATCH,
     POLISH_PROMPT,
+    SEARCH_BUDGET_EXHAUSTED,
+    SEARCH_FINAL_INSTRUCTION,
+    SEARCH_NO_RESULTS,
+    SEARCH_REPEAT_PREFIX,
+    SEARCH_REPEAT_THRESHOLD,
     TEMPLATE_FILL_PROMPT,
 )
 
@@ -106,7 +111,9 @@ class VidscribeProcessor:
                 f"parameters; --temperature {temperature} will be ignored."
             )
 
-        # Exa citation search (vision mode only)
+        # Exa citation search (vision mode only). _batch_queries holds
+        # (tokens, query, result) for searches made in the current batch.
+        self._batch_queries: list[tuple[set, str, str]] = []
         self.exa_enabled = False
         self.exa_client = None
         if exa_api_key and not text_only:
@@ -164,6 +171,7 @@ class VidscribeProcessor:
         max_retries: int = 3,
         max_tokens: int = 16000,
         tools: Optional[list] = None,
+        tool_choice: dict | None = None,
     ) -> Tuple[str, str, object]:
         """Make streaming API request with retry logic for rate limiting.
 
@@ -184,6 +192,8 @@ class VidscribeProcessor:
                     stream_kwargs["extra_body"] = {"temperature": self.temperature}
                 if tools:
                     stream_kwargs["tools"] = tools
+                if tool_choice:
+                    stream_kwargs["tool_choice"] = tool_choice
 
                 with self.client.messages.stream(**stream_kwargs) as stream:
                     for text in stream.text_stream:
@@ -243,6 +253,7 @@ class VidscribeProcessor:
 
         response_text = ""
         tool_call_count = 0
+        forced_final = False
         while True:
             try:
                 result = aikit.stream_text(
@@ -260,37 +271,41 @@ class VidscribeProcessor:
 
             response_text += result.text
 
-            if (
-                result.finish_reason == "tool_calls"
-                and self.exa_enabled
-                and result.tool_calls
-                and tool_call_count < MAX_TOOL_CALLS_PER_BATCH
-            ):
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": result.text or None,
-                    "tool_calls": result.tool_calls,
-                }
-                messages.append(assistant_msg)
+            pending = bool(
+                result.finish_reason == "tool_calls" and self.exa_enabled and result.tool_calls
+            )
+            if pending and not forced_final:
+                exhausted = tool_call_count >= MAX_TOOL_CALLS_PER_BATCH
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": result.text or None,
+                        "tool_calls": result.tool_calls,
+                    }
+                )
                 for tc in result.tool_calls:
-                    tool_call_count += 1
-                    try:
-                        args = json.loads(tc["function"]["arguments"] or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
-                    query = args.get("query", "")
-                    self.console.print(
-                        f"[dim]  Searching: {query[:80]}...[/dim]"
-                        if len(query) > 80
-                        else f"[dim]  Searching: {query}[/dim]"
-                    )
+                    if exhausted:
+                        tool_content = SEARCH_BUDGET_EXHAUSTED
+                    else:
+                        tool_call_count += 1
+                        try:
+                            args = json.loads(tc["function"]["arguments"] or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_content = self._search_with_dedup(args.get("query", ""))
                     messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": self._execute_exa_search(query),
-                        }
+                        {"role": "tool", "tool_call_id": tc["id"], "content": tool_content}
                     )
+                if exhausted:
+                    # Pending calls answered; demand the transcript in one final
+                    # turn (aikit has no tool_choice passthrough)
+                    self.console.print(
+                        f"[yellow]Warning: Hit tool call limit ({MAX_TOOL_CALLS_PER_BATCH}) "
+                        "for this batch; requesting the transcript without further "
+                        "searches[/yellow]"
+                    )
+                    messages.append({"role": "user", "content": SEARCH_FINAL_INSTRUCTION})
+                    forced_final = True
                 progress.update(
                     progress_task,
                     description=f"Processing citations ({tool_call_count} searches)",
@@ -298,10 +313,10 @@ class VidscribeProcessor:
                 )
                 continue
 
-            if tool_call_count >= MAX_TOOL_CALLS_PER_BATCH:
+            if pending and forced_final:
                 self.console.print(
-                    f"[yellow]Warning: Hit tool call limit "
-                    f"({MAX_TOOL_CALLS_PER_BATCH}) for this batch[/yellow]"
+                    "[yellow]Warning: Model kept requesting searches after the budget "
+                    "was exhausted; batch may be empty[/yellow]"
                 )
             if result.finish_reason == "length":
                 self.console.print(
@@ -310,6 +325,56 @@ class VidscribeProcessor:
                 )
             progress.update(progress_task, completed=100)
             return response_text
+
+    @staticmethod
+    def _query_tokens(query: str) -> set:
+        """Lowercase alphanumeric tokens of three or more characters."""
+        return {t for t in re.findall(r"[a-z0-9]+", query.lower()) if len(t) > 2}
+
+    @staticmethod
+    def _citation_key(query: str) -> str | None:
+        """Leading 'Author [Author] Year' tokens of a citation-style query.
+
+        Returns None when no year appears within the first four tokens
+        ("et al" is ignored).
+        """
+        tokens = [t for t in re.findall(r"[a-z0-9]+", query.lower()) if t not in ("et", "al")]
+        for i, tok in enumerate(tokens[:4]):
+            if re.fullmatch(r"(19|20)\d\d", tok) and i >= 1:
+                return " ".join(tokens[: i + 1])
+        return None
+
+    def _search_with_dedup(self, query: str) -> str:
+        """Search unless this batch already searched for the same reference.
+
+        A repeat is a query with the same leading author-year key as an
+        earlier one, or, when either query lacks such a key, with token
+        overlap at or above SEARCH_REPEAT_THRESHOLD. Two queries with
+        different author-year keys are different references however much
+        their topic words overlap. Repeats return the earlier result with
+        an instruction not to reword and retry, without calling Exa.
+        """
+        tokens = self._query_tokens(query)
+        key = self._citation_key(query)
+        for prev_tokens, prev_query, prev_result in self._batch_queries:
+            prev_key = self._citation_key(prev_query)
+            if key is not None and prev_key is not None:
+                is_repeat = key == prev_key
+            else:
+                union = tokens | prev_tokens
+                overlap = len(tokens & prev_tokens) / len(union) if union else 0.0
+                is_repeat = overlap >= SEARCH_REPEAT_THRESHOLD
+            if is_repeat:
+                self.console.print(f"[dim]  Repeat query (not searched): {query[:80]}[/dim]")
+                return SEARCH_REPEAT_PREFIX.format(previous=prev_query) + prev_result
+        self.console.print(
+            f"[dim]  Searching: {query[:80]}...[/dim]"
+            if len(query) > 80
+            else f"[dim]  Searching: {query}[/dim]"
+        )
+        result = self._execute_exa_search(query)
+        self._batch_queries.append((tokens, query, result))
+        return result
 
     def _execute_exa_search(self, query: str) -> str:
         """Execute an Exa academic paper search and return formatted result."""
@@ -323,7 +388,7 @@ class VidscribeProcessor:
             )
 
             if not results.results:
-                return f"No results found for: {query}"
+                return SEARCH_NO_RESULTS.format(query=query)
 
             r = results.results[0]
             parts = []
@@ -390,6 +455,7 @@ class VidscribeProcessor:
         Returns:
             List of transcript content for each section
         """
+        self._batch_queries = []
         content = []
 
         # Images first (per Claude Vision API guidance: images before text);
@@ -503,7 +569,7 @@ class VidscribeProcessor:
         # been observed to return tool_use blocks with stop_reason "end_turn",
         # and an unanswered tool call yields an empty batch.
         tool_call_count = 0
-        while self.exa_enabled and tool_call_count < MAX_TOOL_CALLS_PER_BATCH:
+        while self.exa_enabled:
             tool_use_blocks = [block for block in final_message.content if block.type == "tool_use"]
             if not tool_use_blocks:
                 break
@@ -512,26 +578,31 @@ class VidscribeProcessor:
             # precede tool_use blocks when continuing a tool-use turn
             messages.append({"role": "assistant", "content": final_message.content})
 
-            # Execute each tool call and collect results
+            # Past the budget, answer the pending calls with a refusal and
+            # force one final text turn with tool_choice none
+            exhausted = tool_call_count >= MAX_TOOL_CALLS_PER_BATCH
             tool_results = []
             for block in tool_use_blocks:
-                tool_call_count += 1
-                query = block.input.get("query", "")
-                self.console.print(
-                    f"[dim]  Searching: {query[:80]}...[/dim]"
-                    if len(query) > 80
-                    else f"[dim]  Searching: {query}[/dim]"
-                )
-                result = self._execute_exa_search(query)
+                if exhausted:
+                    result = SEARCH_BUDGET_EXHAUSTED
+                else:
+                    tool_call_count += 1
+                    result = self._search_with_dedup(block.input.get("query", ""))
                 tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    }
+                    {"type": "tool_result", "tool_use_id": block.id, "content": result}
                 )
 
-            messages.append({"role": "user", "content": tool_results})
+            user_content: list = tool_results
+            tool_choice = None
+            if exhausted:
+                self.console.print(
+                    f"[yellow]Warning: Hit tool call limit ({MAX_TOOL_CALLS_PER_BATCH}) "
+                    "for this batch; requesting the transcript without further "
+                    "searches[/yellow]"
+                )
+                user_content = tool_results + [{"type": "text", "text": SEARCH_FINAL_INSTRUCTION}]
+                tool_choice = {"type": "none"}
+            messages.append({"role": "user", "content": user_content})
 
             progress.update(
                 api_task,
@@ -540,15 +611,11 @@ class VidscribeProcessor:
             )
 
             continued_text, stop_reason, final_message = self._make_streaming_api_request(
-                messages, api_task, progress, tools=tools
+                messages, api_task, progress, tools=tools, tool_choice=tool_choice
             )
             response_text += continued_text
-
-        if tool_call_count >= MAX_TOOL_CALLS_PER_BATCH:
-            self.console.print(
-                f"[yellow]Warning: Hit tool call limit "
-                f"({MAX_TOOL_CALLS_PER_BATCH}) for this batch[/yellow]"
-            )
+            if exhausted:
+                break
 
         # Handle continuation if truncated (multi-turn, no prefill)
         max_continuations = 3
