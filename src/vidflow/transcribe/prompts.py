@@ -17,6 +17,11 @@ MAX_TOOL_CALLS_PER_BATCH = 20
 # earlier one in the same batch (see VidscribeProcessor._search_with_dedup)
 SEARCH_REPEAT_THRESHOLD = 0.5
 
+# Repeated searches per batch after which the search budget is treated as
+# exhausted: models that ignore the repeat notice otherwise burn the whole
+# budget, and every round trip re-sends the batch's images
+SEARCH_MAX_REPEATS = 3
+
 # Tool results and instructions that keep the model from looping on searches
 SEARCH_NO_RESULTS = (
     "No results found for: {query}. Do not retry this reference with reworded "

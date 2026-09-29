@@ -80,6 +80,7 @@ from vidflow.transcribe.prompts import (  # noqa: E402
     MAX_TOOL_CALLS_PER_BATCH,
     SEARCH_BUDGET_EXHAUSTED,
     SEARCH_FINAL_INSTRUCTION,
+    SEARCH_MAX_REPEATS,
     SEARCH_REPEAT_PREFIX,
 )
 
@@ -208,3 +209,36 @@ def test_local_lane_forces_final_turn_at_budget(no_warm, monkeypatch, tmp_path):
     # The over-budget call was answered with the exhausted notice before the final instruction
     tool_msgs = [m for m in seen[-1] if m.get("role") == "tool"]
     assert tool_msgs[-1]["content"] == SEARCH_BUDGET_EXHAUSTED
+
+
+def test_repeated_searches_exhaust_the_budget_early(no_warm, monkeypatch, tmp_path):
+    """A model that ignores the repeat notice gets cut off after a few repeats."""
+    processor = VidscribeProcessor(
+        api_key=None, model="primary", json_output=True, exa_api_key="fake-exa"
+    )
+    processor._execute_exa_search = MagicMock(return_value="result")
+    sections = [_section("00:00:00")]
+    final_text = "## 00:00:00\n![[img/00:00:00.jpg]]\nSlide.\n\nText."
+    turns = [0]
+
+    def fake_stream_text(client, model, messages, **kw):
+        turns[0] += 1
+        if messages[-1] == {"role": "user", "content": SEARCH_FINAL_INSTRUCTION}:
+            return SimpleNamespace(text=final_text, finish_reason="stop", tool_calls=[])
+        call = {
+            "id": f"tc_{turns[0]}",
+            "type": "function",
+            "function": {
+                "name": "exa_search",
+                "arguments": json.dumps({"query": "Li 2023 Othello-GPT"}),
+            },
+        }
+        return SimpleNamespace(text="", finish_reason="tool_calls", tool_calls=[call])
+
+    monkeypatch.setattr("vidflow.transcribe.processor.aikit.stream_text", fake_stream_text)
+    contents = processor.process_markdown_batch(sections, [], tmp_path, MagicMock(), 1, 1)
+
+    assert contents == ["Slide.\n\nText."]
+    assert processor._execute_exa_search.call_count == 1
+    # 1 real search + SEARCH_MAX_REPEATS repeats + 1 exhausted turn + 1 final turn
+    assert turns[0] == SEARCH_MAX_REPEATS + 3

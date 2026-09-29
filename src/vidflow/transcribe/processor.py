@@ -37,6 +37,7 @@ from vidflow.transcribe.prompts import (
     POLISH_PROMPT,
     SEARCH_BUDGET_EXHAUSTED,
     SEARCH_FINAL_INSTRUCTION,
+    SEARCH_MAX_REPEATS,
     SEARCH_NO_RESULTS,
     SEARCH_REPEAT_PREFIX,
     SEARCH_REPEAT_THRESHOLD,
@@ -114,6 +115,7 @@ class VidscribeProcessor:
         # Exa citation search (vision mode only). _batch_queries holds
         # (tokens, query, result) for searches made in the current batch.
         self._batch_queries: list[tuple[set, str, str]] = []
+        self._batch_repeats = 0
         self.exa_enabled = False
         self.exa_client = None
         if exa_api_key and not text_only:
@@ -275,7 +277,7 @@ class VidscribeProcessor:
                 result.finish_reason == "tool_calls" and self.exa_enabled and result.tool_calls
             )
             if pending and not forced_final:
-                exhausted = tool_call_count >= MAX_TOOL_CALLS_PER_BATCH
+                exhausted = self._search_budget_exhausted(tool_call_count)
                 messages.append(
                     {
                         "role": "assistant",
@@ -299,11 +301,7 @@ class VidscribeProcessor:
                 if exhausted:
                     # Pending calls answered; demand the transcript in one final
                     # turn (aikit has no tool_choice passthrough)
-                    self.console.print(
-                        f"[yellow]Warning: Hit tool call limit ({MAX_TOOL_CALLS_PER_BATCH}) "
-                        "for this batch; requesting the transcript without further "
-                        "searches[/yellow]"
-                    )
+                    self.console.print(self._budget_warning())
                     messages.append({"role": "user", "content": SEARCH_FINAL_INSTRUCTION})
                     forced_final = True
                 progress.update(
@@ -344,6 +342,22 @@ class VidscribeProcessor:
                 return " ".join(tokens[: i + 1])
         return None
 
+    def _search_budget_exhausted(self, tool_call_count: int) -> bool:
+        """True once the batch has spent its searches or kept repeating them."""
+        return (
+            tool_call_count >= MAX_TOOL_CALLS_PER_BATCH or self._batch_repeats >= SEARCH_MAX_REPEATS
+        )
+
+    def _budget_warning(self) -> str:
+        if self._batch_repeats >= SEARCH_MAX_REPEATS:
+            reason = f"{self._batch_repeats} repeated searches"
+        else:
+            reason = f"tool call limit ({MAX_TOOL_CALLS_PER_BATCH})"
+        return (
+            f"[yellow]Warning: Hit {reason} for this batch; requesting the "
+            "transcript without further searches[/yellow]"
+        )
+
     def _search_with_dedup(self, query: str) -> str:
         """Search unless this batch already searched for the same reference.
 
@@ -365,6 +379,7 @@ class VidscribeProcessor:
                 overlap = len(tokens & prev_tokens) / len(union) if union else 0.0
                 is_repeat = overlap >= SEARCH_REPEAT_THRESHOLD
             if is_repeat:
+                self._batch_repeats += 1
                 self.console.print(f"[dim]  Repeat query (not searched): {query[:80]}[/dim]")
                 return SEARCH_REPEAT_PREFIX.format(previous=prev_query) + prev_result
         self.console.print(
@@ -456,6 +471,7 @@ class VidscribeProcessor:
             List of transcript content for each section
         """
         self._batch_queries = []
+        self._batch_repeats = 0
         content = []
 
         # Images first (per Claude Vision API guidance: images before text);
@@ -580,7 +596,7 @@ class VidscribeProcessor:
 
             # Past the budget, answer the pending calls with a refusal and
             # force one final text turn with tool_choice none
-            exhausted = tool_call_count >= MAX_TOOL_CALLS_PER_BATCH
+            exhausted = self._search_budget_exhausted(tool_call_count)
             tool_results = []
             for block in tool_use_blocks:
                 if exhausted:
@@ -595,11 +611,7 @@ class VidscribeProcessor:
             user_content: list = tool_results
             tool_choice = None
             if exhausted:
-                self.console.print(
-                    f"[yellow]Warning: Hit tool call limit ({MAX_TOOL_CALLS_PER_BATCH}) "
-                    "for this batch; requesting the transcript without further "
-                    "searches[/yellow]"
-                )
+                self.console.print(self._budget_warning())
                 user_content = tool_results + [{"type": "text", "text": SEARCH_FINAL_INSTRUCTION}]
                 tool_choice = {"type": "none"}
             messages.append({"role": "user", "content": user_content})
