@@ -48,23 +48,33 @@ def get_image_dimensions(image_path: Path) -> Tuple[int, int]:
 
 
 def resize_image(src: Path, dst: Path, max_dim: int, magick_cmd: str) -> bool:
-    """Resize image if needed, preserving aspect ratio.
+    """Resize image if needed, preserving aspect ratio, as 3-channel sRGB.
 
-    Returns True if image was resized, False if it was just copied.
+    ImageMagick writes a grayscale JPEG when a frame has no colour content
+    (a black or white-only slide). Vision backends that stack a batch's
+    image tensors then fail on the channel mismatch ("stack expects each
+    tensor to be equal size"), so every prepared image is written as
+    TrueColor sRGB whether or not it is resized.
+
+    Returns True if the image was resized.
     """
     width, height = get_image_dimensions(src)
-    max_current = max(width, height)
+    resized = max(width, height) > max_dim
 
-    if max_current <= max_dim:
-        # No resize needed, copy original
-        shutil.copy(src, dst)
-        return False
-
-    # Resize using ImageMagick
-    cmd = [magick_cmd, str(src), "-resize", f"{max_dim}x{max_dim}>", str(dst)]
+    cmd = [
+        magick_cmd,
+        str(src),
+        "-resize",
+        f"{max_dim}x{max_dim}>",  # shrink only when larger
+        "-colorspace",
+        "sRGB",
+        "-type",
+        "TrueColor",
+        str(dst),
+    ]
 
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        return True
+        return resized
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to resize image: {e.stderr.decode()}")

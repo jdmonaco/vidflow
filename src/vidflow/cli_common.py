@@ -105,13 +105,20 @@ def output_result(
     if json_mode:
         print(result.to_json())
     else:
+        # Aggregate results carry the underlying failures in `errors`;
+        # show any not already in the message
+        errors = [e for e in (result.errors or []) if e not in result.message]
         if logger:
             if result.success:
                 logger.info(result.message)
             else:
                 logger.error(result.message)
+            for error in errors:
+                logger.error(f"  {error}")
         else:
             if result.success:
                 print(result.message, file=sys.stderr)
             else:
                 print(f"Error: {result.message}", file=sys.stderr)
+            for error in errors:
+                print(f"  {error}", file=sys.stderr)
