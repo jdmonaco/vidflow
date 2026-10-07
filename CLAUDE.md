@@ -25,7 +25,7 @@ The `--transcribe` and `--polish` flags on `youtube` and `local` (mutually exclu
 Both tiers run through `VidscribeProcessor`; polish is its `text_only` mode:
 
 - **transcribe** — frames + captions to a vision model; describes slide content and enhances/corrects caption text with visual context (`TEMPLATE_FILL_PROMPT`).
-- **polish** — captions only, no frames sent; corrects speech-to-text errors, filler words, punctuation, and paragraphing (`POLISH_PROMPT`). Cheap and fast; requires caption text (YouTube auto-captions or embedded subtitles) in the capture. Citation search (Exa) is disabled in this mode. A single input is polished **in place** (frontmatter/title/preamble preserved verbatim, no frontmatter generation); `-o` or multiple inputs write a new file whose generated frontmatter is merged over the original via `merge_frontmatter` (capture keys like `source`/`published`/`author` survive — transcribe uses the same merge).
+- **polish** — captions only, no frames sent; corrects speech-to-text errors, filler words, punctuation, and paragraphing (`POLISH_PROMPT`). Cheap and fast; requires caption text (YouTube auto-captions, or a local sidecar .vtt or embedded subtitles) in the capture. Citation search (Exa) is disabled in this mode. A single input is polished **in place** (frontmatter/title/preamble preserved verbatim, no frontmatter generation); `-o` or multiple inputs write a new file whose generated frontmatter is merged over the original via `merge_frontmatter` (capture keys like `source`/`published`/`author` survive — transcribe uses the same merge).
 
 Whenever a new transcript file is written (transcribe, or polish with `-o`/multiple inputs), each input capture note is moved into the sibling `transcripts/` folder (`archive_capture`, numeric suffix on collision) so the folder holds one note per video; `--keep-capture` leaves it in place. The generated frontmatter is repaired (`repair_yaml_scalars`) when the model emits bare colons or flow openers in scalar values, and a failed generation falls back to the capture note's own title rather than a generic one.
 
@@ -33,7 +33,9 @@ Whenever a new transcript file is written (transcribe, or polish with `-o`/multi
 
 The transcribe module natively handles pre-existing transcript text (e.g., YouTube auto-captions) via the `existing_text` field on `TimestampSection`. When `parse_vidcapture_markdown` encounters text after image embeds, it captures it into `existing_text`. The unified prompt and template builder include `<existing-transcript>` XML tags per section when this text is present, instructing Claude to enhance/correct it using visual frame context.
 
-Both YouTube captures (with existing transcripts) and local captures (skeleton sections) flow through the same `VidscribeProcessor`.
+Local captures take caption text from a sidecar WebVTT (`find_sidecar_vtt`: `<stem>.vtt`, then `<stem>.<lang>.vtt`/`<stem>-<lang>.vtt` preferring English — Teams names downloads `<stem>-en-US.vtt`) ahead of embedded tracks; an explicit `--subtitle-track` skips the sidecar. WebVTT voice tags (`<v Name>`) set `TranscriptSegment.speaker`, and `format_segments` renders speaker turns as `**Name**: text` paragraphs — the same label format the transcribe prompt emits, and both `TEMPLATE_FILL_PROMPT` and `POLISH_PROMPT` treat existing labels as authoritative. Teams downloads of locally transcribed recordings (Word/Stream "Transcribe") carry no voice tags; only meeting transcripts are diarized.
+
+Both YouTube captures (with existing transcripts) and local captures (captioned or skeleton sections) flow through the same `VidscribeProcessor`.
 
 ## Source layout
 
@@ -56,7 +58,7 @@ src/vidflow/
 │   ├── metadata.py          # VideoMetadataProtocol
 │   ├── titling.py           # AI title generation (local quick slot)
 │   ├── transcript.py        # Transcript selection (download captions, API fallback)
-│   ├── subtitles.py         # Embedded subtitle stream extraction
+│   ├── subtitles.py         # Sidecar .vtt discovery, embedded subtitle extraction, WebVTT voice tags
 │   ├── utils.py             # URL parsing, clipboard URLs, formatting
 │   └── video.py             # yt-dlp wrapper (single-call fetch_video)
 └── transcribe/              # Transcription (formerly vidscribe)

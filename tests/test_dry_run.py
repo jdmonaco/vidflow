@@ -117,5 +117,26 @@ class TestLocalDryRun:
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
         assert data["success"] is True
-        assert data["data"]["files"] == [{"file": str(present), "action": "capture"}]
+        assert data["data"]["files"] == [
+            {"file": str(present), "action": "capture", "sidecar": None}
+        ]
         assert data["data"]["post_process"]["step"] == "polish"
+
+    def test_names_sidecar_vtt(self, tmp_path, capsys):
+        present = tmp_path / "talk.mp4"
+        present.write_bytes(b"x")
+        (tmp_path / "talk-en-US.vtt").write_text("WEBVTT\n")
+        rc = vidflow_main(["local", "--dry-run", "--json", "-o", str(tmp_path), str(present)])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["data"]["files"][0]["sidecar"] == "talk-en-US.vtt"
+
+    def test_no_subtitles_hides_sidecar(self, tmp_path, capsys):
+        present = tmp_path / "talk.mp4"
+        present.write_bytes(b"x")
+        (tmp_path / "talk.vtt").write_text("WEBVTT\n")
+        vidflow_main(
+            ["local", "--dry-run", "--json", "--no-subtitles", "-o", str(tmp_path), str(present)]
+        )
+        data = json.loads(capsys.readouterr().out)
+        assert data["data"]["files"][0]["sidecar"] is None

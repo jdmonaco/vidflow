@@ -1,6 +1,12 @@
-"""Embedded subtitle detection and extraction for local video files.
+"""Subtitle discovery and extraction for local video files.
 
-Detects text-based subtitle streams (mov_text, subrip, webvtt, ass/ssa) via
+A sidecar WebVTT file next to the video (``<stem>.vtt``, ``<stem>.en.vtt``,
+``<stem>-en-US.vtt`` — the last is how Microsoft Teams/Stream name a
+downloaded transcript) is preferred over embedded tracks. WebVTT voice tags
+(``<v Speaker Name>``) carry speaker diarization into
+``TranscriptSegment.speaker``.
+
+For embedded tracks, detects text-based subtitle streams (mov_text, subrip, webvtt, ass/ssa) via
 ffprobe, extracts the selected track via ffmpeg as WebVTT, parses it into
 TranscriptSegment objects, and sanitizes cue text (strips HTML-like tags,
 inline timestamp tags, ASS override codes, decodes HTML entities).
@@ -179,6 +185,10 @@ def select_subtitle_stream(
     return text_streams[0]
 
 
+# Opening WebVTT voice tag: <v Name> or <v.class1.class2 Name>; the
+# annotation (everything up to ">") is the speaker name
+_VOICE_RE = re.compile(r"<v(?:\.[^\s>]*)?\s+([^>]+)>")
+
 # Matches HTML/XML-style tags (<b>, <font color="...">, <c.classname>, <v Speaker>, etc.)
 _TAG_RE = re.compile(r"<[^>]+>")
 # Matches inline WebVTT timestamp tags like <00:00:05.000>
@@ -247,18 +257,91 @@ def parse_webvtt(vtt_text: str) -> list[TranscriptSegment]:
             cue_lines.append(lines[i])
             i += 1
 
-        text = sanitize_cue_text("\n".join(cue_lines))
-        if text:
-            segments.append(
-                TranscriptSegment(
-                    text=text,
-                    start=start,
-                    duration=max(0.0, end - start),
+        for speaker, raw in split_voice_spans("\n".join(cue_lines)):
+            text = sanitize_cue_text(raw)
+            if text:
+                segments.append(
+                    TranscriptSegment(
+                        text=text,
+                        start=start,
+                        duration=max(0.0, end - start),
+                        speaker=speaker,
+                    )
                 )
-            )
         i += 1
 
     return segments
+
+
+def split_voice_spans(raw: str) -> list[tuple[str | None, str]]:
+    """Split raw cue text into (speaker, text) spans at each WebVTT voice tag.
+
+    A cue normally carries at most one voice tag (Teams writes one per cue),
+    but the spec allows several; each starts a new span. Text before the
+    first tag, or a cue without tags, has no speaker.
+    """
+    matches = list(_VOICE_RE.finditer(raw))
+    if not matches:
+        return [(None, raw)]
+    spans: list[tuple[str | None, str]] = []
+    if raw[: matches[0].start()].strip():
+        spans.append((None, raw[: matches[0].start()]))
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+        speaker = _WS_RE.sub(" ", html.unescape(m.group(1))).strip() or None
+        spans.append((speaker, raw[m.end() : end]))
+    return spans
+
+
+# Language suffix on a sidecar name: "en", "en-US", "en_GB". Restricted to
+# two-letter primaries so arbitrary suffixes ("talk-old.vtt") don't match.
+_SIDECAR_LANG_RE = re.compile(r"^[a-z]{2}(?:[-_][A-Z]{2})?$")
+
+
+def find_sidecar_vtt(video_path: Path, language: str = DEFAULT_LANGUAGE) -> Path | None:
+    """Locate a sidecar WebVTT transcript next to a video file.
+
+    Candidates, best first: ``<stem>.vtt``; ``<stem>.<lang>.vtt`` or
+    ``<stem>-<lang>.vtt`` whose language matches ``language``; the same
+    with any other language. Ties break by name for determinism.
+    """
+    stem = video_path.stem
+    ranked: list[tuple[int, str, Path]] = []
+    try:
+        entries = list(video_path.parent.iterdir())
+    except OSError:
+        return None
+    for p in entries:
+        if p.suffix.lower() != ".vtt" or p.name.startswith(".") or not p.is_file():
+            continue
+        name = p.name[: -len(p.suffix)]
+        if name == stem:
+            rank = 0
+        elif len(name) > len(stem) + 1 and name.startswith(stem) and name[len(stem)] in ".-":
+            tag = name[len(stem) + 1 :]
+            if not _SIDECAR_LANG_RE.match(tag):
+                continue
+            rank = 1 if tag.lower().startswith(language.lower()) else 2
+        else:
+            continue
+        ranked.append((rank, p.name, p))
+    if not ranked:
+        return None
+    return min(ranked)[2]
+
+
+def load_sidecar_vtt(path: Path) -> list[TranscriptSegment]:
+    """Read and parse a sidecar WebVTT file (BOM and CRLF tolerant)."""
+    try:
+        vtt_text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as e:
+        raise SubtitleError(f"Cannot read sidecar {path.name}: {e}") from e
+    return parse_webvtt(vtt_text)
+
+
+def list_speakers(segments: list[TranscriptSegment]) -> list[str]:
+    """Distinct speaker names in order of first appearance."""
+    return list(dict.fromkeys(s.speaker for s in segments if s.speaker))
 
 
 def extract_subtitle_track(

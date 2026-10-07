@@ -64,6 +64,8 @@ vidflow local recording.mp4 --transcribe
 vidflow local part1.mp4 part2.mp4 --transcribe --merge
 ```
 
+Caption text for a local capture comes from a sidecar WebVTT file when one sits next to the video, otherwise from an embedded text subtitle track. Sidecars match `<stem>.vtt`, `<stem>.<lang>.vtt`, or `<stem>-<lang>.vtt` (the last is how Teams/Stream name a downloaded transcript, e.g. `talk-en-US.vtt`), preferring the bare name, then English. WebVTT voice tags (`<v Speaker Name>`, written by Teams meeting transcripts) become speaker turns: each turn is its own `**Speaker Name**: text` paragraph, and `polish`/`transcribe` keep those labels. `--subtitle-track N` selects an embedded track and skips the sidecar; `--no-subtitles` ignores both; `--list-subtitles` and `--dry-run` show which source would be used.
+
 ### Transcribe existing captures
 
 ```bash
@@ -84,7 +86,7 @@ The transcript is written as a new note named from the generated title, and the 
 
 ### Polish existing captures (text-only)
 
-`polish` is the lightweight alternative to `transcribe`: it sends only the collated caption text (YouTube auto-captions or embedded subtitles) to the configured model for cleanup — speech-to-text errors, filler words, punctuation, paragraphing — without sending any frame images. Sections without caption text pass through unchanged; frames-only captures are rejected (use `transcribe`).
+`polish` is the lightweight alternative to `transcribe`: it sends only the collated caption text (YouTube auto-captions, or a local video's sidecar .vtt or embedded subtitles) to the configured model for cleanup — speech-to-text errors, filler words, punctuation, paragraphing — without sending any frame images. Sections without caption text pass through unchanged; frames-only captures are rejected (use `transcribe`).
 
 A single input is polished **in place**: the section text is replaced while the file's frontmatter, title, and preamble (video embed, description) are preserved verbatim, and no frontmatter is generated. The raw captions remain recoverable in `transcripts/raw-transcript-<id>.json`. Passing `-o`, or multiple inputs (always merged), writes a new file whose generated frontmatter is merged over the original — capture keys like `source`, `published`, and `author` are preserved.
 
@@ -148,7 +150,7 @@ vidflow youtube URL --transcribe
 
 vidflow local file.mp4 --transcribe
   |
-  +- vidflow.capture.core.process_local_video() -> markdown (empty sections)
+  +- vidflow.capture.core.process_local_video() -> markdown (sidecar/embedded captions, or empty sections)
   |
   +- vidflow.transcribe.transcribe_markdown()
        +- VidscribeProcessor.process_all()      -> standard skeleton transcription

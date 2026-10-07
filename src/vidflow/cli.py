@@ -275,18 +275,18 @@ Examples:
     local_parser.add_argument(
         "--no-subtitles",
         action="store_true",
-        help="Ignore embedded subtitle tracks (skip extraction)",
+        help="Ignore sidecar .vtt transcripts and embedded subtitle tracks",
     )
     local_parser.add_argument(
         "--subtitle-track",
         type=int,
         metavar="N",
-        help="Use subtitle track index N (0-based among subtitle streams)",
+        help="Use embedded subtitle track N (0-based among subtitle streams; skips sidecar .vtt)",
     )
     local_parser.add_argument(
         "--list-subtitles",
         action="store_true",
-        help="List embedded subtitle tracks and exit (no capture)",
+        help="List sidecar .vtt and embedded subtitle tracks, then exit (no capture)",
     )
     local_post = local_parser.add_mutually_exclusive_group()
     local_post.add_argument(
@@ -643,16 +643,23 @@ def _polish_captures(
 
 
 def _list_subtitles(args: argparse.Namespace) -> int:
-    """Print embedded subtitle tracks for each input file and exit."""
+    """Print the sidecar .vtt and embedded subtitle tracks for each input file and exit."""
     import json as _json
 
-    from vidflow.capture.subtitles import SubtitleError, probe_subtitle_streams
+    from vidflow.capture.subtitles import (
+        SubtitleError,
+        find_sidecar_vtt,
+        probe_subtitle_streams,
+    )
 
     all_data = []
     exit_code = ExitCode.SUCCESS
 
     for video_path in args.files:
-        entry: dict = {"file": str(video_path)}
+        sidecar = find_sidecar_vtt(video_path)
+        entry: dict = {"file": str(video_path), "sidecar": str(sidecar) if sidecar else None}
+        if sidecar and not args.json_output:
+            print(f"{video_path}:\n  sidecar {sidecar.name} (preferred)")
         try:
             streams = probe_subtitle_streams(video_path)
         except SubtitleError as e:
@@ -680,7 +687,8 @@ def _list_subtitles(args: argparse.Namespace) -> int:
         all_data.append(entry)
 
         if not args.json_output:
-            print(f"{video_path}:")
+            if not sidecar:
+                print(f"{video_path}:")
             if not streams:
                 print("  (no embedded subtitle tracks)")
             else:
@@ -769,9 +777,17 @@ def _dry_run_local(args: argparse.Namespace, output_dir: Path, logger) -> int:
     """Report what `vidflow local` would do without probing or capturing.
 
     Output filenames derive from ffprobe metadata, so they are not
-    predicted here; missing inputs are flagged.
+    predicted here; missing inputs are flagged. Sidecar .vtt discovery is
+    a directory listing only, so the plan names the caption source.
     """
-    rows = [{"file": str(p), "action": "capture" if p.is_file() else "missing"} for p in args.files]
+    from vidflow.capture.subtitles import find_sidecar_vtt
+
+    rows = []
+    for p in args.files:
+        row: dict = {"file": str(p), "action": "capture" if p.is_file() else "missing"}
+        sidecar = find_sidecar_vtt(p) if p.is_file() and not args.no_subtitles else None
+        row["sidecar"] = sidecar.name if sidecar else None
+        rows.append(row)
     missing = sum(1 for r in rows if r["action"] == "missing")
     plan = _post_process_plan(args)
     parts = [f"would capture {len(rows) - missing} file(s)"]
@@ -795,6 +811,8 @@ def _dry_run_local(args: argparse.Namespace, output_dir: Path, logger) -> int:
         print(f"Dry run. Output directory: {output_dir}", file=sys.stderr)
         for i, row in enumerate(rows, 1):
             print(f"  [{i}/{len(rows)}] {row['action']:<8} {row['file']}", file=sys.stderr)
+            if row["sidecar"]:
+                print(f"         captions from sidecar {row['sidecar']}", file=sys.stderr)
     output_result(result, args.json_output, logger)
     return ExitCode.SUCCESS if result.success else ExitCode.ERROR
 

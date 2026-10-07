@@ -87,6 +87,30 @@ def generate_frontmatter(
     return f"---\n{yaml_str}---\n"
 
 
+def format_segments(segments: list[TranscriptSegment]) -> str:
+    """Join a section's caption segments into markdown text.
+
+    Undiarized captions run together as one paragraph. When any segment
+    carries a speaker, consecutive same-speaker segments form one turn and
+    each turn is its own ``**Speaker**: text`` paragraph — the label format
+    the transcribe prompt emits, so polish/transcribe preserve it. Every
+    section opens with a label, even when the speaker continues from the
+    previous section, so each section stands alone.
+    """
+    if not any(s.speaker for s in segments):
+        return " ".join(s.text for s in segments)
+    turns: list[tuple[str | None, list[str]]] = []
+    for seg in segments:
+        if turns and turns[-1][0] == seg.speaker:
+            turns[-1][1].append(seg.text)
+        else:
+            turns.append((seg.speaker, [seg.text]))
+    return "\n\n".join(
+        f"**{speaker}**: {' '.join(texts)}" if speaker else " ".join(texts)
+        for speaker, texts in turns
+    )
+
+
 def generate_markdown_body(
     grouped_data: list[tuple[FrameInfo, list[TranscriptSegment]]],
     identifier: str,
@@ -102,8 +126,7 @@ def generate_markdown_body(
         section += f"![[{relative_path}]]\n\n"
 
         if segments:
-            text = " ".join(s.text for s in segments)
-            section += f"{text}\n"
+            section += f"{format_segments(segments)}\n"
 
         sections.append(section)
 

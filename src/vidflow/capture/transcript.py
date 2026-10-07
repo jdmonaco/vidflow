@@ -30,6 +30,7 @@ class TranscriptSegment:
     text: str
     start: float
     duration: float
+    speaker: str | None = None  # From WebVTT voice tags; None when undiarized
 
 
 class TranscriptError(Exception):

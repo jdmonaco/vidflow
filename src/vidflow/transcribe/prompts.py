@@ -145,6 +145,9 @@ use that text as a starting point and enhance it:
 - Remove repeated words or stuttered phrases.
 - Correct technical terminology that was misrecognized by auto-captioning.
 - Preserve the speaker's meaning and technical terminology faithfully.
+- If the existing transcript carries speaker labels (`**Name**: ...`), they come from the
+  recording's own diarized transcript and are authoritative: never rename or re-attribute
+  a turn, and keep each speaker's turn as its own paragraph.
 
 **B. Live transcription sidebar visible** — If no existing transcript is provided but a live
 transcription sidebar is visible in the frame (e.g., Teams real-time transcript panel), perform
@@ -218,6 +221,9 @@ For each timestamp section that includes <existing-transcript> tags, rewrite the
 - Preserve the speaker's meaning and technical terminology faithfully.
 - Do NOT summarize, condense, or omit content — polish it in place.
 - Do NOT invent content that is not present in the caption text.
+- If the caption text carries speaker labels (`**Name**: ...`), keep each label exactly as
+  written and keep each speaker's turn as its own paragraph; never merge text across
+  speakers. Do not add labels where the caption text has none.
 
 For sections with no <existing-transcript> tags, output the timestamp heading and image
 embed only, with no added text.
@@ -237,6 +243,8 @@ After each image embed, on a new line, add the polished caption text (if any):
 ![[image_embed]]
 
 Polished caption text here as one or more flowing paragraphs...
+
+**Speaker Name**: Polished text for a labeled speaker turn...
 </output-format>
 """
 

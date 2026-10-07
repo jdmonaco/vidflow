@@ -283,6 +283,94 @@ def process_video(
     return md_file
 
 
+def _load_local_transcript(
+    video_path: Path,
+    metadata: LocalVideoMetadata,
+    subtitle_track: int | None,
+    out_console: Console,
+) -> list | None:
+    """Load caption segments for a local video, or None.
+
+    A sidecar WebVTT file wins over embedded tracks (a downloaded Teams
+    transcript is the better source: it carries speaker voice tags). An
+    explicit ``subtitle_track`` names an embedded stream, so it skips the
+    sidecar. A sidecar that fails or yields no cues falls back to embedded.
+    """
+    from vidflow.capture.subtitles import (
+        SubtitleError,
+        extract_subtitle_track,
+        find_sidecar_vtt,
+        list_speakers,
+        load_sidecar_vtt,
+        probe_subtitle_streams,
+        select_subtitle_stream,
+    )
+
+    if subtitle_track is None:
+        sidecar = find_sidecar_vtt(video_path)
+        if sidecar is not None:
+            try:
+                segments = load_sidecar_vtt(sidecar)
+            except SubtitleError as e:
+                out_console.print(f"  [yellow]![/] {e}")
+                segments = []
+            if segments:
+                speakers = list_speakers(segments)
+                who = f", {len(speakers)} speaker(s)" if speakers else ", no speaker tags"
+                out_console.print(
+                    f"[green]+[/] Loaded {len(segments)} cues from sidecar {sidecar.name}{who}"
+                )
+                metadata.subtitle_source = f"sidecar {sidecar.name}"
+                return segments
+            out_console.print(
+                f"  [yellow]![/] Sidecar {sidecar.name} yielded no cues; " "trying embedded tracks"
+            )
+
+    try:
+        streams = probe_subtitle_streams(video_path)
+    except SubtitleError as e:
+        out_console.print(f"  [yellow]![/] Subtitle probe failed: {e}")
+        return None
+    if not streams:
+        return None
+
+    if len(streams) > 1 and subtitle_track is None:
+        out_console.print(f"  [dim]Found {len(streams)} subtitle tracks:[/]")
+        for s in streams:
+            out_console.print(f"    [dim]- {s.describe()}[/]")
+
+    try:
+        chosen = select_subtitle_stream(streams, track=subtitle_track, language="en")
+    except SubtitleError as e:
+        out_console.print(f"  [yellow]![/] {e}")
+        return None
+
+    if chosen is None:
+        out_console.print("  [yellow]![/] No text-based subtitle track selectable")
+        return None
+    if not chosen.is_text_based:
+        out_console.print(
+            f"  [yellow]![/] Selected track codec '{chosen.codec}' is not "
+            "text-based; skipping subtitle extraction"
+        )
+        return None
+
+    try:
+        with out_console.status("[bold blue]Extracting embedded subtitles...", spinner="dots"):
+            segments = extract_subtitle_track(video_path, chosen)
+    except SubtitleError as e:
+        out_console.print(f"  [yellow]![/] Subtitle extraction failed: {e}")
+        return None
+    if not segments:
+        out_console.print(f"  [yellow]![/] Subtitle track {chosen.describe()} yielded no cues")
+        return None
+    out_console.print(
+        f"[green]+[/] Extracted {len(segments)} subtitle cues from track {chosen.describe()}"
+    )
+    metadata.subtitle_source = chosen.describe()
+    return segments
+
+
 def process_local_video(
     video_path: Path,
     output_dir: Path,
@@ -302,13 +390,6 @@ def process_local_video(
     Returns:
         Path to the generated markdown file, or dict if json_output.
     """
-    from vidflow.capture.subtitles import (
-        SubtitleError,
-        extract_subtitle_track,
-        probe_subtitle_streams,
-        select_subtitle_stream,
-    )
-
     out_console = Console(quiet=True) if json_output else console
 
     # 1. Get video metadata
@@ -319,56 +400,10 @@ def process_local_video(
     out_console.print(f"  [dim]Title:[/] {metadata.title}")
     out_console.print(f"  [dim]Duration:[/] {metadata.duration:.1f}s")
 
-    # 1b. Probe and extract embedded subtitles
+    # 1b. Sidecar .vtt first, then embedded subtitle tracks
     transcript: list | None = None
     if use_subtitles or subtitle_track is not None:
-        try:
-            streams = probe_subtitle_streams(video_path)
-        except SubtitleError as e:
-            out_console.print(f"  [yellow]![/] Subtitle probe failed: {e}")
-            streams = []
-
-        if streams:
-            if len(streams) > 1 and subtitle_track is None:
-                out_console.print(f"  [dim]Found {len(streams)} subtitle tracks:[/]")
-                for s in streams:
-                    out_console.print(f"    [dim]- {s.describe()}[/]")
-
-            try:
-                chosen = select_subtitle_stream(
-                    streams,
-                    track=subtitle_track,
-                    language="en",
-                )
-            except SubtitleError as e:
-                out_console.print(f"  [yellow]![/] {e}")
-                chosen = None
-
-            if chosen is None:
-                out_console.print("  [yellow]![/] No text-based subtitle track selectable")
-            elif not chosen.is_text_based:
-                out_console.print(
-                    f"  [yellow]![/] Selected track codec '{chosen.codec}' is not "
-                    "text-based; skipping subtitle extraction"
-                )
-            else:
-                try:
-                    with out_console.status(
-                        "[bold blue]Extracting embedded subtitles...", spinner="dots"
-                    ):
-                        transcript = extract_subtitle_track(video_path, chosen)
-                    if transcript:
-                        out_console.print(
-                            f"[green]+[/] Extracted {len(transcript)} subtitle cues "
-                            f"from track {chosen.describe()}"
-                        )
-                        metadata.subtitle_source = chosen.describe()
-                    else:
-                        out_console.print(
-                            f"  [yellow]![/] Subtitle track {chosen.describe()} " "yielded no cues"
-                        )
-                except SubtitleError as e:
-                    out_console.print(f"  [yellow]![/] Subtitle extraction failed: {e}")
+        transcript = _load_local_transcript(video_path, metadata, subtitle_track, out_console)
 
     # Check if output file already exists
     md_filename = generate_local_markdown_filename(metadata)
@@ -441,6 +476,8 @@ def process_local_video(
         out_console.print("  [dim]Formatted with mdformat[/]")
 
     if json_output:
+        from vidflow.capture.subtitles import list_speakers
+
         return {
             "status": "success",
             "video": str(video_path.resolve()),
@@ -449,5 +486,6 @@ def process_local_video(
             "markdown": str(md_file.resolve()),
             "subtitle_source": metadata.subtitle_source,
             "subtitle_cue_count": len(transcript) if transcript else 0,
+            "speakers": list_speakers(transcript) if transcript else [],
         }
     return md_file
