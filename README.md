@@ -177,7 +177,3 @@ Polish reuses the same processor, batching, retry, and continuity machinery as t
 | `polish f1.md f2.md` | Merged (1 new output) | N/A (always merged) |
 
 `--merge` exists for stitching one long event (e.g., a workshop recorded as several local files) into a single note. A merged output keeps each source file as its own section: an H1 heading per original file (its title), with H2 timestamp headings restarting under each. The overall generated title lives in the frontmatter only. Parts are processed in separate batches with continuity context reset at each boundary, so transcription never bleeds across recordings.
-
-## Version
-
-0.4.2
