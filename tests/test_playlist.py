@@ -110,7 +110,7 @@ class TestVidflowPlaylistExpansion:
 
     @patch("vidflow.capture.capture_youtube")
     @patch("vidflow.capture.video.expand_playlist", return_value=EXPANDED)
-    @patch("vidflow.capture.cli.get_clipboard_urls")
+    @patch("vidflow.capture.utils.get_clipboard_urls")
     def test_clipboard_playlist_expanded(self, mock_clip, mock_expand, mock_capture):
         mock_clip.return_value = [PLAYLIST]
         mock_capture.return_value = self._capture_result()

@@ -6,7 +6,7 @@ Always read `~/tools/AGENTS.md` first for ecosystem-wide context and development
 
 ## Overview
 
-vidflow is a unified video capture and transcription CLI. It consolidates the former ytcapture (YouTube/local video frame extraction) and vidscribe (AI vision transcription) into a single installable package with four entry points: `vidflow`, `ytcapture`, `vidcapture`, and `vidscribe`. Inference runs on the local ampere-gateway by default (via `~/tools/aikit`); claude-* model ids route to the Anthropic API as the escape hatch.
+vidflow is a unified video capture and transcription CLI. It consolidates the former ytcapture (YouTube/local video frame extraction) and vidscribe (AI vision transcription) into a single installable package with one entry point, `vidflow` (the standalone `ytcapture`/`vidcapture`/`vidscribe` commands were removed in 0.6.0). Inference runs on the local ampere-gateway by default (via `~/tools/aikit`); claude-* model ids route to the Anthropic API as the escape hatch.
 
 ## Architecture
 
@@ -16,9 +16,7 @@ vidflow is a unified video capture and transcription CLI. It consolidates the fo
 - `vidflow local <file>...` — Capture local video frames
 - `vidflow transcribe <markdown>...` — Full visual transcription of captured frames
 - `vidflow polish <markdown>...` — Text-only cleanup of captured caption text
-- `ytcapture` — Standalone backward-compatible YouTube capture
-- `vidcapture` — Standalone backward-compatible local video capture
-- `vidscribe` — Standalone backward-compatible transcription
+- `vidflow completion bash [--install | --path]` — Bash completion (handled before argparse)
 
 The `--transcribe` and `--polish` flags on `youtube` and `local` (mutually exclusive) chain capture and post-processing in one step.
 
@@ -44,14 +42,12 @@ src/vidflow/
 ├── __init__.py              # __version__
 ├── cli.py                   # Unified vidflow entry point (argparse)
 ├── cli_common.py            # ExitCode, OperationResult
-├── completion.py            # vidflow bash completion handler
+├── completion.py            # completion bash [--install | --path] handler
 ├── youtube.py               # YouTube-specific transcription wrapper
 ├── data/
-│   └── completion.bash      # vidflow completion script
+│   └── completion.bash      # vidflow completion script (option lists synced to build_parser() by tests/test_completion.py)
 ├── capture/                 # Frame extraction (formerly ytcapture)
 │   ├── __init__.py          # Public API + OperationResult wrappers
-│   ├── cli.py               # Standalone ytcapture/vidcapture entry points
-│   ├── completion.py        # Capture completion handler
 │   ├── config.py            # ~/.config/vidflow/config.yml
 │   ├── core.py              # process_video(), process_local_video()
 │   ├── frames.py            # ffmpeg frame extraction
@@ -60,12 +56,11 @@ src/vidflow/
 │   ├── metadata.py          # VideoMetadataProtocol
 │   ├── titling.py           # AI title generation (local quick slot)
 │   ├── transcript.py        # Transcript selection (download captions, API fallback)
-│   ├── utils.py             # URL parsing, formatting
-│   ├── video.py             # yt-dlp wrapper (single-call fetch_video)
-│   └── data/                # Bash completion scripts
+│   ├── subtitles.py         # Embedded subtitle stream extraction
+│   ├── utils.py             # URL parsing, clipboard URLs, formatting
+│   └── video.py             # yt-dlp wrapper (single-call fetch_video)
 └── transcribe/              # Transcription (formerly vidscribe)
     ├── __init__.py           # Public API + transcribe_markdown()
-    ├── cli.py                # Standalone vidscribe entry point
     ├── models.py             # TimestampSection, VidcaptureDocument
     ├── parser.py             # Markdown parsing, merge, resolve
     ├── processor.py          # VidscribeProcessor

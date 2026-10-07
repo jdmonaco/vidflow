@@ -1,18 +1,14 @@
 # Bash completion for vidflow
 # Install: vidflow completion bash --install
 # Or: vidflow completion bash > ~/.local/share/bash-completion/completions/vidflow
+#
+# The per-subcommand option lists below are checked against the argparse
+# parser by tests/test_completion.py; update both together.
 
 _vidflow_complete_dirs() {
     local cur="$1"
     compopt -o filenames -o nospace
     mapfile -t COMPREPLY < <(compgen -d -- "$cur")
-}
-
-_vidflow_complete_files() {
-    local cur="$1"
-    local ext="$2"
-    compopt -o filenames -o nospace
-    mapfile -t COMPREPLY < <(compgen -f -X "!$ext" -- "$cur")
 }
 
 _vidflow_complete_files_or_dirs() {
@@ -30,42 +26,54 @@ _vidflow_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    # Handle 'completion' subcommand
-    if [[ "${COMP_WORDS[1]}" == "completion" ]]; then
-        case "$COMP_CWORD" in
-            2)
-                COMPREPLY=($(compgen -W "bash" -- "$cur"))
-                ;;
-            *)
-                COMPREPLY=($(compgen -W "--install --path" -- "$cur"))
-                ;;
-        esac
+    local subcommands="youtube local transcribe polish completion"
+
+    # Top level: subcommand names, or top-level options after '-'
+    if [[ "$COMP_CWORD" -eq 1 ]]; then
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=($(compgen -W "-h --help --version" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
+        fi
         return 0
     fi
 
-    # Detect active subcommand
-    local subcmd=""
-    for word in "${COMP_WORDS[@]:1}"; do
-        case "$word" in
-            youtube|local|transcribe|polish) subcmd="$word"; break ;;
-        esac
-    done
+    local subcmd="${COMP_WORDS[1]}"
 
-    # Subcommand completion at position 1
-    if [[ -z "$subcmd" ]]; then
-        COMPREPLY=($(compgen -W "youtube local transcribe polish completion" -- "$cur"))
+    if [[ "$subcmd" == "completion" ]]; then
+        if [[ "$COMP_CWORD" -eq 2 ]]; then
+            COMPREPLY=($(compgen -W "bash" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -W "--install --path" -- "$cur"))
+        fi
         return 0
     fi
 
-    # Common transcribe flags
-    local transcribe_flags="-m --model --provider --batch-size --context-frames --temperature --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only"
-    local polish_flags="-m --model --provider --batch-size --context-frames --temperature -c --context -t --title -y --yes --dry-run --estimate-only"
-    local common_flags="-v --verbose -q --quiet --json -h --help"
+    local youtube_opts="-h --help -o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title -f --force --transcribe --polish -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
+    local local_opts="-h --help -o --output --interval --max-frames --frame-format --dedup-threshold --no-dedup --fast --no-fast -f --force --no-subtitles --subtitle-track --list-subtitles --transcribe --polish --merge -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
+    local transcribe_opts="-h --help -o --output -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
+    local polish_opts="-h --help -o --output -m --model --provider --temperature --batch-size --context-frames -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
 
-    # Flags requiring specific argument completion
+    local opts=""
+    case "$subcmd" in
+        youtube) opts="$youtube_opts" ;;
+        local) opts="$local_opts" ;;
+        transcribe) opts="$transcribe_opts" ;;
+        polish) opts="$polish_opts" ;;
+        *) return 0 ;;
+    esac
+
+    # Values for options that take an argument
     case "$prev" in
         -o|--output)
-            _vidflow_complete_dirs "$cur"
+            case "$subcmd" in
+                transcribe|polish) _vidflow_complete_files_or_dirs "$cur" "*.md" ;;
+                *) _vidflow_complete_dirs "$cur" ;;
+            esac
+            return 0
+            ;;
+        -c|--context)
+            _vidflow_complete_files_or_dirs "$cur" "*.md"
             return 0
             ;;
         --frame-format)
@@ -76,50 +84,23 @@ _vidflow_completions() {
             COMPREPLY=($(compgen -W "local anthropic" -- "$cur"))
             return 0
             ;;
-        -m|--model|--language|-t|--title)
-            # User types these manually
-            return 0
-            ;;
-        -c|--context)
-            compopt -o filenames -o nospace
-            mapfile -t COMPREPLY < <(compgen -f -- "$cur")
-            return 0
-            ;;
-        --interval|--max-frames|--batch-size|--context-frames|--temperature|--max-dimension|--dedup-threshold|--subtitle-track)
-            # Numeric arguments, no completion
+        -m|--model|--language|-t|--title|--interval|--max-frames|--dedup-threshold|--subtitle-track|--temperature|--batch-size|--context-frames|--max-dimension)
+            # Free-form or numeric; typed manually
             return 0
             ;;
     esac
 
-    # Flag completion when cur starts with -
-    if [[ "$cur" == -* ]]; then
-        local opts=""
-        case "$subcmd" in
-            youtube)
-                opts="-o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title --transcribe --polish $transcribe_flags $common_flags"
-                ;;
-            local)
-                opts="-o --output --interval --max-frames --frame-format --dedup-threshold --no-dedup --fast --no-fast -f --force --no-subtitles --subtitle-track --list-subtitles --transcribe --polish --merge $transcribe_flags $common_flags"
-                ;;
-            transcribe)
-                opts="-o --output $transcribe_flags $common_flags"
-                ;;
-            polish)
-                opts="-o --output $polish_flags $common_flags"
-                ;;
-        esac
+    # Options after '-', and for youtube on an empty word too, since its
+    # positionals are URLs that cannot be completed
+    if [[ "$cur" == -* || "$subcmd" == "youtube" ]]; then
         COMPREPLY=($(compgen -W "$opts" -- "$cur"))
         return 0
     fi
 
-    # Positional argument completion
+    # Positional arguments
     case "$subcmd" in
-        youtube)
-            # URLs are typed manually
-            COMPREPLY=()
-            ;;
         local)
-            _vidflow_complete_files_or_dirs "$cur" "*.@(mp4|mkv|avi|mov|webm|flv|wmv)"
+            _vidflow_complete_files_or_dirs "$cur" "*.@(mp4|m4v|mkv|avi|mov|webm|flv|wmv)"
             ;;
         transcribe|polish)
             _vidflow_complete_files_or_dirs "$cur" "*.md"

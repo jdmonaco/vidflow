@@ -355,7 +355,7 @@ def _resolve_youtube_urls(args: argparse.Namespace) -> list[str] | None:
     if args.urls:
         return args.urls
 
-    from vidflow.capture.cli import get_clipboard_urls
+    from vidflow.capture.utils import get_clipboard_urls
 
     urls = get_clipboard_urls()
     if not urls:

@@ -47,9 +47,6 @@ dev = [
 
 [project.scripts]
 vidflow = "vidflow.cli:main"
-ytcapture = "vidflow.capture.cli:ytcapture_entry"
-vidcapture = "vidflow.capture.cli:vidcapture_entry"
-vidscribe = "vidflow.transcribe.cli:vidscribe_entry"
 
 [build-system]
 requires = ["hatchling"]

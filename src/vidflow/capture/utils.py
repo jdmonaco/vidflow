@@ -1,6 +1,9 @@
 """Utility functions for video capture."""
 
+import platform
 import re
+import shutil
+import subprocess
 from urllib.parse import parse_qs, urlparse
 
 from dateutil import parser as date_parser
@@ -114,3 +117,24 @@ def extract_youtube_urls(text: str) -> list[str]:
             seen.add(url)
             urls.append(url)
     return urls
+
+
+def get_clipboard_urls() -> list[str]:
+    """Return YouTube URLs found on the clipboard (macOS only, else empty)."""
+    if platform.system() != "Darwin":
+        return []
+    if shutil.which("pbpaste") is None:
+        return []
+    try:
+        result = subprocess.run(
+            ["pbpaste"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        clipboard = result.stdout.strip()
+        if not clipboard:
+            return []
+        return extract_youtube_urls(clipboard)
+    except Exception:
+        return []

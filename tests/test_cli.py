@@ -22,65 +22,6 @@ class TestVidflowCli:
         assert result == 2
 
 
-class TestYtcaptureEntry:
-    """Tests for ytcapture standalone entry point."""
-
-    def test_help(self):
-        with pytest.raises(SystemExit) as exc_info:
-            from vidflow.capture.cli import ytcapture_main
-
-            ytcapture_main(["--help"])
-        assert exc_info.value.code == 0
-
-    def test_no_args_no_clipboard(self):
-        """Without URLs or clipboard, should exit with error."""
-        from unittest.mock import patch
-        from vidflow.capture.cli import ytcapture_main
-
-        with patch("vidflow.capture.cli.get_clipboard_urls", return_value=[]):
-            with pytest.raises(SystemExit) as exc_info:
-                ytcapture_main([])
-            assert exc_info.value.code == 2
-
-
-class TestVidcaptureEntry:
-    """Tests for vidcapture standalone entry point."""
-
-    def test_help(self):
-        with pytest.raises(SystemExit) as exc_info:
-            from vidflow.capture.cli import vidcapture_main
-
-            vidcapture_main(["--help"])
-        assert exc_info.value.code == 0
-
-    def test_no_args(self):
-        """Without files, should exit with error."""
-        from vidflow.capture.cli import vidcapture_main
-
-        with pytest.raises(SystemExit) as exc_info:
-            vidcapture_main([])
-        assert exc_info.value.code == 2
-
-
-class TestVidscribeEntry:
-    """Tests for vidscribe standalone entry point."""
-
-    def test_help(self):
-        from vidflow.transcribe.cli import main
-
-        with pytest.raises(SystemExit) as exc_info:
-            main(["--help"])
-        assert exc_info.value.code == 0
-
-    def test_no_args(self):
-        """Without inputs, should exit with error."""
-        from vidflow.transcribe.cli import main
-
-        with pytest.raises(SystemExit) as exc_info:
-            main([])
-        assert exc_info.value.code == 2
-
-
 class TestImports:
     """Tests for package-level imports."""
 

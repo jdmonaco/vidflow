@@ -15,7 +15,7 @@ Or install as a tool:
 uv tool install ~/tools/vidflow
 ```
 
-This provides four commands: `vidflow`, `ytcapture`, `vidcapture`, `vidscribe`.
+This provides the `vidflow` command. The former standalone `ytcapture`, `vidcapture`, and `vidscribe` commands were removed in 0.6.0; use `vidflow youtube`, `vidflow local`, and `vidflow transcribe`.
 
 ## Usage
 
@@ -26,7 +26,7 @@ This provides four commands: `vidflow`, `ytcapture`, `vidcapture`, `vidscribe`.
 vidflow youtube https://youtube.com/watch?v=VIDEO_ID
 
 # Bare video IDs also work
-ytcapture dQw4w9WgXcQ
+vidflow youtube dQw4w9WgXcQ
 
 # No arguments: YouTube URLs are read from the clipboard (macOS),
 # listed, and confirmed before capture (-y skips the prompt)
@@ -102,15 +102,14 @@ vidflow polish part1.md part2.md -o combined.md
 vidflow polish capture.md --estimate-only
 ```
 
-### Standalone commands
-
-The backward-compatible standalone entry points work the same as before:
+### Shell completion
 
 ```bash
-ytcapture URL              # YouTube capture
-vidcapture meeting.mp4     # Local video capture
-vidscribe capture.md       # Transcription
+vidflow completion bash --install   # Symlink into ~/.local/share/bash-completion/completions/
+vidflow completion bash --path      # Show the installation path
 ```
+
+The symlink targets the installed package, so re-run `--install` after reinstalling vidflow (e.g., switching between editable and regular installs).
 
 ### Common options
 
