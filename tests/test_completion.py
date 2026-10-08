@@ -121,3 +121,11 @@ def test_positional_and_context_complete_markdown(tmp_path):
 def test_completion_subcommand():
     assert _complete("completion", "") == ["bash"]
     assert set(_complete("completion", "bash", "--")) == {"--install", "--path"}
+
+
+def test_help_documents_completion():
+    from vidflow.cli import build_parser
+
+    help_text = build_parser().format_help()
+    assert "completion  " in help_text
+    assert "vidflow completion bash --install" in help_text

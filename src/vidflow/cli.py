@@ -112,6 +112,7 @@ Commands:
   local       Capture frames from local video files
   transcribe  Full visual transcription of captured frames (frames + captions)
   polish      Text-only cleanup of captured caption text (in place by default)
+  completion  Print or install the bash completion script (see below)
 
 Models default to the local inference gateway; claude-* ids route to the
 Anthropic API as the quality escape hatch.
@@ -126,6 +127,11 @@ Examples:
   vidflow local part1.mp4 part2.mp4 --merge --transcribe
   vidflow transcribe part1.md part2.md -o combined.md
   vidflow polish capture.md
+
+Shell Completion:
+  vidflow completion bash            Output completion script
+  vidflow completion bash --install  Install to user completions directory
+  vidflow completion bash --path     Show installation path
 """,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
