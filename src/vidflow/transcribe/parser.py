@@ -136,6 +136,7 @@ def parse_vidcapture_markdown(path: Path) -> VidcaptureDocument:
                     image_embed=image_embed,
                     image_path=image_path,
                     existing_text=after_image,
+                    source_path=path,
                 )
             )
 

@@ -128,6 +128,59 @@ class TestMergedProcessing:
         assert not any(ln.startswith("# ") for ln in transcript.splitlines())
 
 
+class TestFileHeadings:
+    """Each input file is named before its first batch is processed."""
+
+    @pytest.fixture
+    def run(self, no_warm, monkeypatch):
+        import io
+
+        from rich.console import Console
+
+        monkeypatch.setattr(
+            VidscribeProcessor,
+            "process_markdown_batch",
+            lambda self, sections, *a: ["x" for _ in sections],
+        )
+
+        def _run(document, batch_size=1):
+            processor = VidscribeProcessor(
+                api_key=None, model="primary", batch_size=batch_size, text_only=True
+            )
+            buf = io.StringIO()
+            processor.console = Console(file=buf, width=200, no_color=True)
+            processor.process_all(document, with_frontmatter=False)
+            return buf.getvalue()
+
+        return _run
+
+    def test_one_heading_per_file_before_its_batches(self, run, two_captures):
+        docs = [parse_vidcapture_markdown(p) for p in two_captures]
+        out = run(merge_vidcapture_documents(docs))  # 2 batches per file
+
+        assert out.count("File 1/2: Morning Session.md") == 1
+        assert out.count("File 2/2: Afternoon Session.md") == 1
+        lines = [ln for ln in out.splitlines() if ln.startswith(("File", "Processing batch"))]
+        assert [ln.split(" (")[0] for ln in lines] == [
+            "File 1/2: Morning Session.md",
+            "Processing batch 1/4",
+            "Processing batch 2/4",
+            "File 2/2: Afternoon Session.md",
+            "Processing batch 3/4",
+            "Processing batch 4/4",
+        ]
+
+    def test_single_file_named(self, run, two_captures):
+        out = run(parse_vidcapture_markdown(two_captures[0]), batch_size=10)
+        assert "File: Morning Session.md" in out
+
+    def test_markup_in_name_not_interpreted(self, run, tmp_path):
+        p = tmp_path / "Talk [bold] [C].md"
+        p.write_text(_capture_md("Talk"), encoding="utf-8")
+        out = run(parse_vidcapture_markdown(p), batch_size=10)
+        assert "File: Talk [bold] [C].md" in out
+
+
 class TestYoutubeMergeRemoved:
     """--merge is no longer accepted on the youtube subcommand."""
 

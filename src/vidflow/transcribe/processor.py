@@ -18,6 +18,7 @@ import anthropic
 import yaml
 from anthropic import Anthropic
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     Progress,
@@ -53,6 +54,10 @@ try:
     EXA_AVAILABLE = True
 except ImportError:
     EXA_AVAILABLE = False
+
+
+# A timestamp section heading as the batch template and response use it
+_TIMESTAMP_HEADING_RE = re.compile(r"^##\s+\d{2}:\d{2}:\d{2}\s*$", re.MULTILINE)
 
 
 class VidscribeProcessor:
@@ -266,7 +271,11 @@ class VidscribeProcessor:
                     messages=messages,
                     max_tokens=16000,
                     temperature=self.temperature,
-                    tools=tools,
+                    # The forced final turn offers no tools at all: aikit has
+                    # no tool_choice passthrough, and with the tool still
+                    # offered the model intermittently answered the "write
+                    # the transcript" instruction with no template
+                    tools=None if forced_final else tools,
                     on_delta=on_delta,
                     max_continuations=3,
                 )
@@ -301,8 +310,8 @@ class VidscribeProcessor:
                         {"role": "tool", "tool_call_id": tc["id"], "content": tool_content}
                     )
                 if exhausted:
-                    # Pending calls answered; demand the transcript in one final
-                    # turn (aikit has no tool_choice passthrough)
+                    # Pending calls answered; demand the transcript in one
+                    # final turn, sent without tool definitions
                     self.console.print(self._budget_warning())
                     messages.append({"role": "user", "content": SEARCH_FINAL_INSTRUCTION})
                     forced_final = True
@@ -494,6 +503,11 @@ class VidscribeProcessor:
     ) -> List[str]:
         """Process a batch of markdown sections with their images.
 
+        A response with no timestamp sections at all is a failed batch, not
+        an empty one (observed after the citation search budget ran out:
+        the forced final turn intermittently returned no template). It is
+        retried once with citation search disabled.
+
         Args:
             sections: Sections to process in this batch
             previous_sections: Previous sections for context
@@ -505,6 +519,33 @@ class VidscribeProcessor:
         Returns:
             List of transcript content for each section
         """
+        args = (sections, previous_sections, temp_dir, progress, batch_num, total_batches)
+        response_text = self._request_batch(*args)
+        if sections and not _TIMESTAMP_HEADING_RE.search(response_text):
+            excerpt = escape(repr(response_text.strip()[:200]))
+            self.console.print(
+                f"[yellow]Warning: Batch {batch_num}/{total_batches} response has no "
+                f"timestamp sections ({len(response_text)} chars: {excerpt}); "
+                "retrying without citation search[/yellow]",
+                highlight=False,
+            )
+            exa_enabled, self.exa_enabled = self.exa_enabled, False
+            try:
+                response_text = self._request_batch(*args)
+            finally:
+                self.exa_enabled = exa_enabled
+        return self._parse_batch_response(response_text, sections)
+
+    def _request_batch(
+        self,
+        sections: list[TimestampSection],
+        previous_sections: list[TimestampSection],
+        temp_dir: Path,
+        progress,
+        batch_num: int,
+        total_batches: int,
+    ) -> str:
+        """Build the batch request, run it (with the citation tool loop), return raw text."""
         self._batch_queries = []
         self._batch_repeats = 0
         content = []
@@ -606,7 +647,7 @@ class VidscribeProcessor:
         if self.provider == "local":
             response_text = self._run_local_batch(messages, api_task, progress)
             progress.remove_task(api_task)
-            return self._parse_batch_response(response_text, sections)
+            return response_text
 
         # Pass tools if Exa citation search is enabled
         tools = [EXA_SEARCH_TOOL] if self.exa_enabled else None
@@ -711,9 +752,7 @@ class VidscribeProcessor:
 
         # Remove the task to prevent accumulation in the progress display
         progress.remove_task(api_task)
-
-        # Parse response to extract content for each section
-        return self._parse_batch_response(response_text, sections)
+        return response_text
 
     def _parse_batch_response(
         self, response_text: str, sections: List[TimestampSection]
@@ -971,6 +1010,14 @@ class VidscribeProcessor:
 
         return data
 
+    @staticmethod
+    def _part_heading(section: TimestampSection, total_parts: int) -> str:
+        """Rich markup naming the input file a batch belongs to."""
+        source = section.source_path
+        name = source.name if source else (section.part_title or f"Part {section.part_index + 1}")
+        prefix = f"File {section.part_index + 1}/{total_parts}" if total_parts > 1 else "File"
+        return f"[bold cyan]{prefix}:[/bold cyan] [bold]{escape(name)}[/bold]"
+
     def process_all(
         self,
         document: VidcaptureDocument,
@@ -1071,8 +1118,19 @@ class VidscribeProcessor:
                                 "[yellow]Checkpoint does not match inputs; starting fresh[/yellow]"
                             )
 
+                # Announce each input file before its first batch; batches
+                # never straddle parts, so a part change marks a new file
+                total_parts = len({s.part_index for s in valid_sections})
+                announced_part: int | None = None
+
                 for batch_num in range(start_batch, total_batches):
                     batch = batches[batch_num]
+
+                    if batch[0].part_index != announced_part:
+                        announced_part = batch[0].part_index
+                        self.console.print(
+                            "\n" + self._part_heading(batch[0], total_parts), highlight=False
+                        )
 
                     # Build context from previous filled sections of the SAME
                     # part; a new part starts with no continuity context

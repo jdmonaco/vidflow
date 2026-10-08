@@ -242,3 +242,73 @@ def test_repeated_searches_exhaust_the_budget_early(no_warm, monkeypatch, tmp_pa
     assert processor._execute_exa_search.call_count == 1
     # 1 real search + SEARCH_MAX_REPEATS repeats + 1 exhausted turn + 1 final turn
     assert turns[0] == SEARCH_MAX_REPEATS + 3
+
+
+def _search_call(i: int) -> dict:
+    return {
+        "id": f"tc_{i}",
+        "type": "function",
+        "function": {"name": "exa_search", "arguments": json.dumps({"query": "Li 2023 Othello"})},
+    }
+
+
+def test_local_lane_final_turn_offers_no_tools(no_warm, monkeypatch, tmp_path):
+    """With the tool still offered, the forced final turn intermittently returned no template."""
+    processor = VidscribeProcessor(
+        api_key=None, model="primary", json_output=True, exa_api_key="fake-exa"
+    )
+    processor._execute_exa_search = MagicMock(return_value="result")
+    final_text = "## 00:00:00\n![[img/00:00:00.jpg]]\nSlide."
+    offered = []
+
+    def fake_stream_text(client, model, messages, tools=None, **kw):
+        offered.append(bool(tools))
+        if messages[-1] == {"role": "user", "content": SEARCH_FINAL_INSTRUCTION}:
+            return SimpleNamespace(text=final_text, finish_reason="stop", tool_calls=[])
+        return SimpleNamespace(
+            text="", finish_reason="tool_calls", tool_calls=[_search_call(len(offered))]
+        )
+
+    monkeypatch.setattr("vidflow.transcribe.processor.aikit.stream_text", fake_stream_text)
+    contents = processor.process_markdown_batch(
+        [_section("00:00:00")], [], tmp_path, MagicMock(), 1, 1
+    )
+
+    assert contents == ["Slide."]
+    assert offered[-1] is False
+    assert all(offered[:-1])
+
+
+def test_templateless_response_retried_without_search(no_warm, monkeypatch, tmp_path):
+    processor = VidscribeProcessor(
+        api_key=None, model="primary", json_output=True, exa_api_key="fake-exa"
+    )
+    final_text = "## 00:00:00\n![[img/00:00:00.jpg]]\nSlide."
+    calls = []
+
+    def fake_stream_text(client, model, messages, tools=None, **kw):
+        calls.append(bool(tools))
+        text = "I have finished the searches." if len(calls) == 1 else final_text
+        return SimpleNamespace(text=text, finish_reason="stop", tool_calls=[])
+
+    monkeypatch.setattr("vidflow.transcribe.processor.aikit.stream_text", fake_stream_text)
+    contents = processor.process_markdown_batch(
+        [_section("00:00:00")], [], tmp_path, MagicMock(), 1, 1
+    )
+
+    assert contents == ["Slide."]
+    assert calls == [True, False]  # retry ran with citation search off
+    assert processor.exa_enabled is True  # and restored afterwards
+
+
+def test_response_with_sections_not_retried(no_warm, monkeypatch, tmp_path):
+    processor = VidscribeProcessor(api_key=None, model="primary", json_output=True)
+    calls = []
+
+    def fake_stream_text(client, model, messages, **kw):
+        calls.append(1)
+        return SimpleNamespace(text="## 00:00:00\n\n", finish_reason="stop", tool_calls=[])
+
+    monkeypatch.setattr("vidflow.transcribe.processor.aikit.stream_text", fake_stream_text)
+    processor.process_markdown_batch([_section("00:00:00")], [], tmp_path, MagicMock(), 1, 1)
+    assert len(calls) == 1
