@@ -230,3 +230,68 @@ class TestOutputPathDirectories:
             title="My Talk",
         )
         assert result == (tmp_path / "My Talk.md").resolve()
+
+
+class TestTranscribeMergeFlag:
+    """vidflow transcribe: one transcript per input unless --merge."""
+
+    @pytest.fixture
+    def calls(self, monkeypatch):
+        from vidflow.cli_common import OperationResult
+
+        seen = []
+
+        def fake(input_paths, output=None, title=None, **kw):
+            seen.append({"inputs": [p.name for p in input_paths], "output": output, "title": title})
+            return OperationResult(success=True, message="ok")
+
+        monkeypatch.setattr("vidflow.transcribe.transcribe_markdown", fake)
+        return seen
+
+    def test_separate_by_default(self, calls, two_captures):
+        assert vidflow_main(["transcribe", *map(str, two_captures)]) == 0
+        assert [c["inputs"] for c in calls] == [
+            ["Morning Session.md"],
+            ["Afternoon Session.md"],
+        ]
+
+    def test_merge_flag_combines(self, calls, two_captures):
+        args = ["transcribe", "--merge", "-t", "Day 1", *map(str, two_captures)]
+        assert vidflow_main(args) == 0
+        assert calls == [
+            {
+                "inputs": ["Morning Session.md", "Afternoon Session.md"],
+                "output": None,
+                "title": "Day 1",
+            }
+        ]
+
+    def test_directory_output_shared(self, calls, two_captures, tmp_path):
+        out = tmp_path / "out"
+        out.mkdir()
+        assert vidflow_main(["transcribe", "-o", str(out), *map(str, two_captures)]) == 0
+        assert [c["output"] for c in calls] == [out, out]
+
+    @pytest.mark.parametrize("flags", [["-o", "combined.md"], ["-t", "Day 1"]])
+    def test_single_output_options_need_merge(self, calls, two_captures, flags, capsys):
+        assert vidflow_main(["transcribe", *flags, *map(str, two_captures)]) == 2
+        assert calls == []
+        assert "--merge" in capsys.readouterr().err
+
+    def test_single_input_keeps_file_output_and_title(self, calls, two_captures):
+        args = ["transcribe", "-o", "x.md", "-t", "T", str(two_captures[0])]
+        assert vidflow_main(args) == 0
+        assert calls == [{"inputs": ["Morning Session.md"], "output": Path("x.md"), "title": "T"}]
+
+    def test_failure_does_not_stop_later_inputs(self, monkeypatch, two_captures):
+        from vidflow.cli_common import OperationResult
+
+        seen = []
+
+        def fake(input_paths, **kw):
+            seen.append(input_paths[0].name)
+            return OperationResult(success=len(seen) > 1, message=f"run {len(seen)}")
+
+        monkeypatch.setattr("vidflow.transcribe.transcribe_markdown", fake)
+        assert vidflow_main(["transcribe", *map(str, two_captures)]) == 1
+        assert seen == ["Morning Session.md", "Afternoon Session.md"]

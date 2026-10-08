@@ -158,32 +158,32 @@ class TestPolishMarkdown:
     """Tests for the polish_markdown wrapper (no API calls)."""
 
     def test_dry_run_counts_sections(self, no_warm, capture_file):
-        result = polish_markdown([capture_file], dry_run=True, json_output=True)
+        result = polish_markdown(capture_file, dry_run=True, json_output=True)
         assert result.success
         assert result.data["sections"] == 3
         assert result.data["sections_with_text"] == 2
 
     def test_estimate_only(self, no_warm, capture_file):
-        result = polish_markdown([capture_file], estimate_only=True, json_output=True)
+        result = polish_markdown(capture_file, estimate_only=True, json_output=True)
         assert result.success
         assert result.data["estimate"] > 0
 
     def test_frames_only_capture_rejected(self, no_warm, frames_only_file):
-        result = polish_markdown([frames_only_file], dry_run=True, json_output=True)
+        result = polish_markdown(frames_only_file, dry_run=True, json_output=True)
         assert not result.success
         assert "No caption text" in result.message
 
     def test_anthropic_lane_requires_key(self, monkeypatch, capture_file):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         result = polish_markdown(
-            [capture_file], model="claude-opus-5", dry_run=True, json_output=True
+            capture_file, model="claude-opus-5", dry_run=True, json_output=True
         )
         assert not result.success
         assert "ANTHROPIC_API_KEY" in result.message
 
     def test_local_lane_needs_no_key(self, no_warm, monkeypatch, capture_file):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        result = polish_markdown([capture_file], dry_run=True, json_output=True)
+        result = polish_markdown(capture_file, dry_run=True, json_output=True)
         assert result.success
 
 
@@ -214,7 +214,7 @@ class TestInPlacePolish:
         return calls
 
     def test_updates_input_file(self, no_warm, fake_process_all, capture_file):
-        result = polish_markdown([capture_file], json_output=True)
+        result = polish_markdown(capture_file, json_output=True)
 
         assert result.success
         assert result.data["in_place"] is True
@@ -232,51 +232,51 @@ class TestInPlacePolish:
         siblings = [p.name for p in capture_file.parent.glob("*.md")]
         assert siblings == [capture_file.name]
 
-    def test_explicit_output_writes_new_file(
+    def test_explicit_output_writes_polished_copy(
         self, no_warm, fake_process_all, capture_file, tmp_path
     ):
         out = tmp_path / "polished.md"
-        result = polish_markdown([capture_file], output=out, json_output=True)
+        result = polish_markdown(capture_file, output=out, json_output=True)
 
         assert result.success
         assert result.data["in_place"] is False
-        assert fake_process_all["with_frontmatter"] is True
-        assert out.exists()
+        # Polish never generates frontmatter or retitles, even to a new file
+        assert fake_process_all["with_frontmatter"] is False
+        out_content = out.read_text(encoding="utf-8")
+        assert out_content.startswith(CAPTURE_MD[: CAPTURE_MD.index("## 00:00:00")].rstrip())
+        assert "Hello, this is polished caption text." in out_content
+        assert "Generated Title" not in out_content
         # Capture note moved to transcripts/ as the raw record
         archived = capture_file.parent / "transcripts" / capture_file.name
         assert not capture_file.exists()
         assert "hello uh this is raw caption text" in archived.read_text(encoding="utf-8")
         assert result.data["archived"] == [str(archived)]
-        # Generated frontmatter merged over original: both survive
-        out_content = out.read_text(encoding="utf-8")
-        assert "Generated Title" in out_content
-        assert "gen" in out_content
 
-    def test_multiple_inputs_write_new_file(
+    def test_directory_output_keeps_filename(
         self, no_warm, fake_process_all, capture_file, tmp_path
     ):
-        second = tmp_path / "capture2.md"
-        second.write_text(CAPTURE_MD, encoding="utf-8")
+        out_dir = tmp_path / "polished"
+        out_dir.mkdir()
+        result = polish_markdown(capture_file, output=out_dir, keep_capture=True)
+        assert result.data["output_path"] == str((out_dir / capture_file.name).resolve())
+        assert (out_dir / capture_file.name).exists()
 
-        result = polish_markdown([capture_file, second], json_output=True)
-
-        assert result.success
-        assert result.data["in_place"] is False
-        # Both inputs archived
-        archive = tmp_path / "transcripts"
-        assert sorted(p.name for p in archive.iterdir()) == ["capture.md", "capture2.md"]
-        assert not capture_file.exists() and not second.exists()
+    def test_output_onto_input_is_in_place(self, no_warm, fake_process_all, capture_file):
+        result = polish_markdown(capture_file, output=capture_file.parent, json_output=True)
+        assert result.data["in_place"] is True
+        assert result.data["archived"] == []
+        assert capture_file.exists()
 
     def test_keep_capture_leaves_inputs(self, no_warm, fake_process_all, capture_file, tmp_path):
         out = tmp_path / "polished.md"
-        result = polish_markdown([capture_file], output=out, keep_capture=True, json_output=True)
+        result = polish_markdown(capture_file, output=out, keep_capture=True, json_output=True)
         assert result.success
         assert result.data["archived"] == []
         assert "hello uh this is raw caption text" in capture_file.read_text(encoding="utf-8")
         assert not (tmp_path / "transcripts").exists()
 
     def test_dry_run_reports_in_place(self, no_warm, capture_file):
-        result = polish_markdown([capture_file], dry_run=True, json_output=True)
+        result = polish_markdown(capture_file, dry_run=True, json_output=True)
         assert result.data["in_place"] is True
         assert result.data["target"] == str(capture_file.resolve())
 
@@ -343,6 +343,39 @@ class TestPolishCli:
         with pytest.raises(SystemExit) as exc_info:
             vidflow_main(["polish", str(capture_file), "--max-dimension", "800"])
         assert exc_info.value.code == 2
+
+    def test_multiple_inputs_polished_separately_in_place(self, no_warm, capture_file, monkeypatch):
+        second = capture_file.parent / "capture2.md"
+        second.write_text(CAPTURE_MD, encoding="utf-8")
+        seen = []
+
+        def fake(input_path, output=None, **kw):
+            from vidflow.cli_common import OperationResult
+
+            seen.append((Path(input_path).name, output))
+            return OperationResult(success=True, message="ok")
+
+        monkeypatch.setattr("vidflow.transcribe.polish_markdown", fake)
+        assert vidflow_main(["polish", str(capture_file), str(second)]) == 0
+        assert seen == [("capture.md", None), ("capture2.md", None)]
+
+    def test_multiple_inputs_reject_file_output(self, capture_file, capsys):
+        second = capture_file.parent / "capture2.md"
+        second.write_text(CAPTURE_MD, encoding="utf-8")
+        rc = vidflow_main(["polish", "-o", "out.md", str(capture_file), str(second)])
+        assert rc == 2
+        assert "directory" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("flag", ["-t", "--title", "--merge"])
+    def test_no_retitle_or_merge_flags(self, capture_file, flag):
+        with pytest.raises(SystemExit) as exc_info:
+            vidflow_main(["polish", str(capture_file), flag, "X"])
+        assert exc_info.value.code == 2
+
+    def test_local_polish_merge_rejected(self, tmp_path, capsys):
+        rc = vidflow_main(["local", "--polish", "--merge", "a.mp4", "b.mp4"])
+        assert rc == 2
+        assert "--transcribe only" in capsys.readouterr().err
 
     def test_transcribe_polish_mutually_exclusive(self):
         for subcmd, target in (("youtube", "URL"), ("local", "f.mp4")):

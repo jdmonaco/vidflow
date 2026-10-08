@@ -51,8 +51,8 @@ _vidflow_completions() {
 
     local youtube_opts="-h --help -o --output --interval --max-frames --frame-format --language --prefer-manual --dedup-threshold --no-dedup --keep-video --no-ai-title -f --force --transcribe --polish -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
     local local_opts="-h --help -o --output --interval --max-frames --frame-format --dedup-threshold --no-dedup --fast --no-fast -f --force --no-subtitles --subtitle-track --list-subtitles --transcribe --polish --merge -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
-    local transcribe_opts="-h --help -o --output -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
-    local polish_opts="-h --help -o --output -m --model --provider --temperature --batch-size --context-frames -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
+    local transcribe_opts="-h --help -o --output --merge -m --model --provider --temperature --batch-size --context-frames --max-dimension -c --context -t --title -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
+    local polish_opts="-h --help -o --output -m --model --provider --temperature --batch-size --context-frames -c --context -y --yes --dry-run --estimate-only --keep-capture -v --verbose -q --quiet --json"
 
     local opts=""
     case "$subcmd" in

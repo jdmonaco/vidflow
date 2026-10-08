@@ -237,10 +237,25 @@ def transcribe_markdown(
         )
 
 
+def polish_target(input_path: Path, output: Path | None = None) -> Path:
+    """Resolve where a polished note is written.
+
+    No output means in place; a directory (existing, or spelled with a
+    trailing separator) receives a file of the input's own name; anything
+    else is the output file itself.
+    """
+    import os
+
+    if output is None:
+        return Path(input_path).resolve()
+    if output.is_dir() or str(output).endswith(os.sep):
+        return output.resolve() / Path(input_path).name
+    return output.resolve()
+
+
 def polish_markdown(
-    input_paths,
+    input_path,
     output=None,
-    title=None,
     context_files=None,
     model=DEFAULT_MODEL,
     batch_size=DEFAULT_POLISH_BATCH_SIZE,
@@ -253,39 +268,45 @@ def polish_markdown(
     json_output=False,
     keep_capture=False,
 ):
-    """Polish raw caption text in vidcapture markdown files (text-only).
+    """Polish raw caption text in one vidcapture markdown file (text-only).
 
-    Sends the collated caption text — YouTube auto-captions or embedded
-    subtitles — to the configured model for cleanup (speech-to-text errors,
-    filler words, punctuation, paragraphing) without sending any frame
-    images. Sections without caption text pass through unchanged.
+    Sends the collated caption text — YouTube auto-captions, a sidecar
+    .vtt, or embedded subtitles — to the configured model for cleanup
+    (speech-to-text errors, filler words, punctuation, paragraphing)
+    without sending any frame images. Sections without caption text pass
+    through unchanged.
 
-    A single input with no explicit output is polished IN PLACE: the
-    section text is replaced while the file's frontmatter, title, and any
-    preamble (video embed, description) are preserved verbatim, and no
-    frontmatter is generated. Passing -o/--output, or multiple inputs
-    (always merged), writes a new file with generated frontmatter instead,
-    and the input capture notes move to transcripts/ unless
-    ``keep_capture`` is set (see ``archive_capture``).
+    Polish only improves its input: the note's frontmatter, title, and
+    preamble (video embed, description) are preserved verbatim, only the
+    section text is replaced, and nothing is merged, retitled, or
+    generated. The result is written in place by default; ``output`` (a
+    file, or a directory receiving the input's own filename, see
+    ``polish_target``) writes the polished copy elsewhere, after which the
+    raw capture moves to transcripts/ unless ``keep_capture`` is set (see
+    ``archive_capture``).
     """
+    import re
+
     from vidflow.cli_common import OperationResult
 
     api_key, key_error = resolve_api_key(model, provider)
     if key_error:
         return key_error
 
-    in_place = output is None and len(input_paths) == 1
+    input_path = Path(input_path)
+    target = polish_target(input_path, output)
+    in_place = target == input_path.resolve()
 
     try:
-        documents = [parse_vidcapture_markdown(p) for p in input_paths]
-        document = merge_vidcapture_documents(documents)
+        document = parse_vidcapture_markdown(input_path)
         total_sections = len(document.sections)
         sections_with_text = sum(1 for s in document.sections if s.existing_text)
 
         if sections_with_text == 0:
             return OperationResult(
                 success=False,
-                message="No caption text found to polish (frames-only capture?)",
+                message=f"No caption text found to polish in {input_path.name} "
+                "(frames-only capture?)",
                 errors=[
                     "Polish requires caption text in the capture markdown; "
                     "use transcribe for frames-only captures"
@@ -316,85 +337,46 @@ def polish_markdown(
                 data={"estimate": estimate, "sections": total_sections},
             )
 
+        where = "in place" if in_place else f"to {target}"
         if dry_run:
-            target = str(document.source_path) if in_place else "new output file"
             return OperationResult(
                 success=True,
                 message=(
                     f"Would polish {sections_with_text} of {total_sections} "
-                    f"sections from {len(input_paths)} file(s) "
-                    f"({'in place' if in_place else 'to a new file'})"
+                    f"sections of {input_path.name} {where}"
                 ),
                 data={
                     "sections": total_sections,
                     "sections_with_text": sections_with_text,
-                    "input_files": [str(p) for p in input_paths],
+                    "input_file": str(input_path),
                     "in_place": in_place,
-                    "target": target,
+                    "target": str(target),
                     "model": model,
                     "batch_size": batch_size,
                 },
             )
 
-        transcript_text, frontmatter_data = processor.process_all(
-            document, with_frontmatter=not in_place
-        )
+        transcript_text, _ = processor.process_all(document, with_frontmatter=False)
 
-        if in_place:
-            import re
-            import sys
+        original = input_path.read_text(encoding="utf-8")
+        first_section = re.search(r"^##\s+\d{2}:\d{2}:\d{2}\s*$", original, re.MULTILINE)
+        # The parser found sections, so the heading must be present
+        prefix = original[: first_section.start()].rstrip()
+        final_md = f"{prefix}\n\n{transcript_text}"
 
-            if title:
-                print(
-                    "Warning: -t/--title is ignored for in-place polish "
-                    "(the file's own title is preserved); use -o to write "
-                    "a new titled file",
-                    file=sys.stderr,
-                )
-
-            original = document.source_path.read_text(encoding="utf-8")
-            first_section = re.search(r"^##\s+\d{2}:\d{2}:\d{2}\s*$", original, re.MULTILINE)
-            # The parser found sections, so the heading must be present
-            prefix = original[: first_section.start()].rstrip()
-            final_md = f"{prefix}\n\n{transcript_text}"
-            document.source_path.write_text(final_md, encoding="utf-8")
-            output_path = document.source_path
-            archived = []
-        else:
-            frontmatter_data = merge_frontmatter(document.frontmatter, frontmatter_data)
-            if title:
-                frontmatter_data["title"] = title
-            else:
-                title = frontmatter_data.get("title", document.title or "Untitled")
-
-            output_path = determine_output_path(
-                input_path=document.source_path,
-                title=title,
-                explicit_output=output,
-            )
-
-            import yaml
-
-            fm_yaml = yaml.dump(frontmatter_data, default_flow_style=False, sort_keys=False).strip()
-            final_md = f"---\n{fm_yaml}\n---\n\n"
-            # Merged outputs carry an H1 per original file in the body
-            if len(input_paths) == 1:
-                final_md += f"# {title}\n\n"
-            final_md += transcript_text
-
-            archived = _archive_inputs(input_paths, output_path, keep_capture)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(final_md, encoding="utf-8")
+        archived = [] if in_place else _archive_inputs([input_path], target, keep_capture)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(final_md, encoding="utf-8")
 
         return OperationResult(
             success=True,
             message=(
-                f"Polished {sections_with_text} of {total_sections} sections "
-                f"{'in place' if in_place else 'to new file'}: {output_path}"
+                f"Polished {sections_with_text} of {total_sections} sections {where}"
+                + ("" if not in_place else f": {target}")
                 + _archived_note(archived)
             ),
             data={
-                "output_path": str(output_path),
+                "output_path": str(target),
                 "archived": [str(p) for p in archived],
                 "sections": total_sections,
                 "sections_with_text": sections_with_text,
@@ -406,7 +388,7 @@ def polish_markdown(
     except Exception as e:
         return OperationResult(
             success=False,
-            message=f"Polish failed: {e}",
+            message=f"Polish failed for {input_path.name}: {e}",
             errors=[str(e)],
         )
 

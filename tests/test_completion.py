@@ -104,7 +104,8 @@ def test_youtube_empty_word_offers_options():
 @needs_bash
 def test_subcommand_options_after_dash():
     assert "--merge" in _complete("local", "--m")
-    assert "--merge" not in _complete("transcribe", "--m")
+    assert "--merge" in _complete("transcribe", "--m")
+    assert "--merge" not in _complete("polish", "--m")
 
 
 @needs_bash

@@ -72,8 +72,11 @@ Caption text for a local capture comes from a sidecar WebVTT file when one sits 
 # Transcribe a single capture markdown
 vidflow transcribe capture.md
 
+# Several captures: one transcript each
+vidflow transcribe talk1.md talk2.md
+
 # Merge multiple captures into one transcript
-vidflow transcribe part1.md part2.md -o combined.md
+vidflow transcribe part1.md part2.md --merge -o combined.md
 
 # Estimate token usage before processing
 vidflow transcribe capture.md --estimate-only
@@ -88,17 +91,18 @@ The transcript is written as a new note named from the generated title, and the 
 
 `polish` is the lightweight alternative to `transcribe`: it sends only the collated caption text (YouTube auto-captions, or a local video's sidecar .vtt or embedded subtitles) to the configured model for cleanup — speech-to-text errors, filler words, punctuation, paragraphing — without sending any frame images. Sections without caption text pass through unchanged; frames-only captures are rejected (use `transcribe`).
 
-A single input is polished **in place**: the section text is replaced while the file's frontmatter, title, and preamble (video embed, description) are preserved verbatim, and no frontmatter is generated. The raw captions remain recoverable in `transcripts/raw-transcript-<id>.json`. Passing `-o`, or multiple inputs (always merged), writes a new file whose generated frontmatter is merged over the original — capture keys like `source`, `published`, and `author` are preserved.
+Polish only improves its inputs: each file is polished **on its own and in place** — the section text is replaced while the file's frontmatter, title, and preamble (video embed, description) are preserved verbatim. Polish never merges inputs, retitles, or generates frontmatter. The raw captions remain recoverable in `transcripts/raw-transcript-<id>.json`. `-o` writes the polished copy elsewhere instead — a file for a single input, or a directory that receives each input under its own filename — and the raw capture note then moves to `transcripts/` unless `--keep-capture` is given.
 
 ```bash
 # Polish a capture markdown in place
 vidflow polish capture.md
 
-# Write a new polished file instead
-vidflow polish capture.md -o polished.md
+# Polish several captures, each in place
+vidflow polish talk1.md talk2.md
 
-# Merge multiple captures into one polished transcript
-vidflow polish part1.md part2.md -o combined.md
+# Write the polished copy elsewhere instead
+vidflow polish capture.md -o polished.md
+vidflow polish talk1.md talk2.md -o polished/
 
 # Estimate token usage before processing
 vidflow polish capture.md --estimate-only
@@ -174,8 +178,7 @@ Polish reuses the same processor, batching, retry, and continuity machinery as t
 |---------|---------|----------------|
 | `youtube URL1 URL2` | Independent (2 outputs) | — (no merge; one note per video) |
 | `local f1.mp4 f2.mp4` | Independent (2 outputs) | Merged (1 output) |
-| `transcribe f1.md f2.md` | Merged (1 output) | N/A (always merged) |
-| `polish f1.md` | In-place update | — |
-| `polish f1.md f2.md` | Merged (1 new output) | N/A (always merged) |
+| `transcribe f1.md f2.md` | Independent (2 outputs) | Merged (1 output) |
+| `polish f1.md f2.md` | Each updated in place | — (polish never merges) |
 
-`--merge` exists for stitching one long event (e.g., a workshop recorded as several local files) into a single note. A merged output keeps each source file as its own section: an H1 heading per original file (its title), with H2 timestamp headings restarting under each. The overall generated title lives in the frontmatter only. Parts are processed in separate batches with continuity context reset at each boundary, so transcription never bleeds across recordings.
+`--merge` exists for stitching one long event (e.g., a workshop recorded as several local files) into a single note. Without it, `transcribe -o` takes a directory when there are several inputs (a file path or `-t` needs a single output, so it is a usage error). A merged output keeps each source file as its own section: an H1 heading per original file (its title), with H2 timestamp headings restarting under each. The overall generated title lives in the frontmatter only. Parts are processed in separate batches with continuity context reset at each boundary, so transcription never bleeds across recordings.

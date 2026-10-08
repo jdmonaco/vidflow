@@ -8,6 +8,7 @@ Provides subcommands for video capture and transcription:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -33,8 +34,9 @@ def _add_transcribe_args(parser: argparse.ArgumentParser, images: bool = True) -
 
     Used by youtube and local subcommands (shared by --transcribe and
     --polish), and by the transcribe and polish subcommands directly.
-    images=False (polish) skips image options and raises the batch default,
-    since text-only requests carry no frame payloads.
+    images=False (polish) skips image options and -t/--title (polish never
+    retitles its input) and raises the batch default, since text-only
+    requests carry no frame payloads.
     """
     add_model_args(parser)
     batch_default = DEFAULT_BATCH_SIZE if images else DEFAULT_POLISH_BATCH_SIZE
@@ -65,11 +67,12 @@ def _add_transcribe_args(parser: argparse.ArgumentParser, images: bool = True) -
         type=Path,
         help="Background context file (repeatable)",
     )
-    parser.add_argument(
-        "-t",
-        "--title",
-        help="Override title (auto-generated if omitted)",
-    )
+    if images:
+        parser.add_argument(
+            "-t",
+            "--title",
+            help="Override title (auto-generated if omitted)",
+        )
     parser.add_argument(
         "-y",
         "--yes",
@@ -125,7 +128,8 @@ Examples:
   vidflow youtube URL --transcribe -m claude-opus-5
   vidflow local recording.mp4 --transcribe
   vidflow local part1.mp4 part2.mp4 --merge --transcribe
-  vidflow transcribe part1.md part2.md -o combined.md
+  vidflow transcribe talk1.md talk2.md       (one transcript each)
+  vidflow transcribe part1.md part2.md --merge -o combined.md
   vidflow polish capture.md
 
 Shell Completion:
@@ -323,7 +327,15 @@ Shell Completion:
         "-o",
         "--output",
         type=Path,
-        help="Output file, or directory for an auto-named file (default: beside input)",
+        help=(
+            "Output file, or directory for auto-named files (default: beside each input); "
+            "a file path needs a single input or --merge"
+        ),
+    )
+    tx_parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge multiple inputs into one transcript (default: one transcript per input)",
     )
     _add_transcribe_args(tx_parser)
     add_common_args(tx_parser)
@@ -332,8 +344,8 @@ Shell Completion:
     pol_parser = subparsers.add_parser(
         "polish",
         help=(
-            "Polish captured caption text with the configured model "
-            "(text-only; a single input is polished in place)"
+            "Polish captured caption text in place with the configured model "
+            "(text-only; each input is improved, never merged or retitled)"
         ),
     )
     pol_parser.add_argument("files", nargs="+", type=Path, help="Vidcapture markdown file(s)")
@@ -342,8 +354,8 @@ Shell Completion:
         "--output",
         type=Path,
         help=(
-            "Write a new file (or into a directory) instead of polishing "
-            "in place (multiple inputs always merge into a new file)"
+            "Write the polished copy to this file (single input) or directory "
+            "(same filename) instead of in place"
         ),
     )
     _add_transcribe_args(pol_parser, images=False)
@@ -611,24 +623,24 @@ def _transcribe_youtube_captures(
 
 def _polish_captures(
     args: argparse.Namespace,
-    captured_paths: list[Path],
+    paths: list[Path],
     errors: list[str],
+    output: Path | None = None,
 ) -> list[OperationResult]:
-    """Run text-only caption polish on captured markdown files."""
+    """Polish each capture note's caption text, one input at a time.
+
+    Polish never merges: every input is improved on its own, in place, or
+    written to ``output`` (a file for a single input, else a directory).
+    Capture subcommands pass no output — their -o is the capture directory,
+    and the fresh capture notes are polished where they were written.
+    """
     from vidflow.transcribe import polish_markdown
 
     results = []
-    # --merge exists only on the local subcommand (stitching a long event)
-    merge = getattr(args, "merge", False)
-    input_groups = [captured_paths] if merge else [[p] for p in captured_paths]
-
-    # Each captured note is polished in place (output/title None); a
-    # merged run needs a new file, auto-named beside the first capture.
-    for paths in input_groups:
+    for path in paths:
         result = polish_markdown(
-            input_paths=paths,
-            output=None,
-            title=args.title if merge else None,
+            input_path=path,
+            output=output,
             context_files=args.context_files,
             model=args.model,
             provider=args.provider,
@@ -715,6 +727,14 @@ def cmd_local(args: argparse.Namespace) -> int:
     if getattr(args, "list_subtitles", False):
         return _list_subtitles(args)
 
+    if args.merge and args.polish:
+        print(
+            "Error: --merge applies to --transcribe only; polish improves each capture "
+            "on its own and never merges",
+            file=sys.stderr,
+        )
+        return ExitCode.USAGE_ERROR
+
     output_dir = args.output or Path.cwd()
     errors = []
     all_results = []
@@ -755,7 +775,7 @@ def cmd_local(args: argparse.Namespace) -> int:
 
     # If --transcribe or --polish, run post-processing (mutually exclusive)
     if args.transcribe and captured_paths:
-        tx_results = _transcribe_local_captures(args, captured_paths, errors)
+        tx_results = _transcribe_captures(args, captured_paths, errors)
         all_results.extend(tx_results)
     elif args.polish and captured_paths:
         pol_results = _polish_captures(args, captured_paths, errors)
@@ -823,22 +843,36 @@ def _dry_run_local(args: argparse.Namespace, output_dir: Path, logger) -> int:
     return ExitCode.SUCCESS if result.success else ExitCode.ERROR
 
 
-def _transcribe_local_captures(
+def _is_dir_target(path: Path | None) -> bool:
+    """True if -o names a directory (existing, or spelled with a trailing separator)."""
+    return path is not None and (path.is_dir() or str(path).endswith(os.sep))
+
+
+def _transcribe_captures(
     args: argparse.Namespace,
-    captured_paths: list[Path],
+    paths: list[Path],
     errors: list[str],
 ) -> list[OperationResult]:
-    """Run standard vidscribe transcription on local captures."""
+    """Run full visual transcription on capture notes.
+
+    One transcript per input by default; ``--merge`` stitches all inputs
+    into a single transcript (an H1 per source file). Shared by
+    ``vidflow transcribe`` and ``vidflow local --transcribe``. A directory
+    ``-o`` receives every auto-named transcript; a file ``-o`` or ``-t``
+    applies only when there is a single output.
+    """
     from vidflow.transcribe import transcribe_markdown
 
-    results = []
+    merge = getattr(args, "merge", False)
+    groups = [paths] if merge else [[p] for p in paths]
+    single = len(groups) == 1
 
-    if args.merge:
-        # Merge all into one transcription
+    results = []
+    for group in groups:
         result = transcribe_markdown(
-            input_paths=captured_paths,
-            output=args.output,
-            title=args.title,
+            input_paths=group,
+            output=args.output if single or _is_dir_target(args.output) else None,
+            title=args.title if single else None,
             context_files=args.context_files,
             model=args.model,
             provider=args.provider,
@@ -855,93 +889,76 @@ def _transcribe_local_captures(
         if not result.success:
             errors.append(result.message)
         results.append(result)
-    else:
-        # Independent processing (default)
-        for path in captured_paths:
-            result = transcribe_markdown(
-                input_paths=[path],
-                output=args.output if len(captured_paths) == 1 else None,
-                title=args.title if len(captured_paths) == 1 else None,
-                context_files=args.context_files,
-                model=args.model,
-                provider=args.provider,
-                batch_size=args.batch_size,
-                context_frames=args.context_frames,
-                temperature=args.temperature,
-                max_dimension=args.max_dimension,
-                auto_confirm=args.yes,
-                dry_run=args.dry_run,
-                estimate_only=args.estimate_only,
-                json_output=args.json_output,
-                keep_capture=args.keep_capture,
-            )
-            if not result.success:
-                errors.append(result.message)
-            results.append(result)
 
     return results
+
+
+def _combine_results(
+    results: list[OperationResult], errors: list[str], verb: str
+) -> OperationResult:
+    """One input's result as-is, or an aggregate over several."""
+    if len(results) == 1:
+        return results[0]
+    succeeded = sum(1 for r in results if r.success)
+    return OperationResult(
+        success=not errors,
+        message=f"{verb} {succeeded}/{len(results)} inputs",
+        data={"results": [r.to_dict() for r in results]},
+        errors=errors or None,
+    )
 
 
 def cmd_transcribe(args: argparse.Namespace) -> int:
     """Handle the transcribe subcommand.
 
-    Multiple inputs are always merged into a single output.
+    Each input gets its own transcript unless --merge is given.
     """
     logger = setup_logging(args.verbose, args.quiet)
 
-    from vidflow.transcribe import transcribe_markdown
+    if len(args.files) > 1 and not args.merge:
+        if args.output and not _is_dir_target(args.output):
+            print(
+                "Error: -o names a single file; with multiple inputs pass a directory, "
+                "or --merge for one combined transcript",
+                file=sys.stderr,
+            )
+            return ExitCode.USAGE_ERROR
+        if args.title:
+            print(
+                "Error: -t/--title needs a single input, or --merge for one combined transcript",
+                file=sys.stderr,
+            )
+            return ExitCode.USAGE_ERROR
 
-    result = transcribe_markdown(
-        input_paths=args.files,
-        output=args.output,
-        title=args.title,
-        context_files=args.context_files,
-        model=args.model,
-        provider=args.provider,
-        batch_size=args.batch_size,
-        context_frames=args.context_frames,
-        temperature=args.temperature,
-        max_dimension=args.max_dimension,
-        auto_confirm=args.yes,
-        dry_run=args.dry_run,
-        estimate_only=args.estimate_only,
-        json_output=args.json_output,
-        keep_capture=args.keep_capture,
-    )
+    errors: list[str] = []
+    results = _transcribe_captures(args, args.files, errors)
+    combined = _combine_results(results, errors, "Transcribed")
 
-    output_result(result, args.json_output, logger)
-    return ExitCode.SUCCESS if result.success else ExitCode.ERROR
+    output_result(combined, args.json_output, logger)
+    return ExitCode.SUCCESS if combined.success else ExitCode.ERROR
 
 
 def cmd_polish(args: argparse.Namespace) -> int:
     """Handle the polish subcommand.
 
-    A single input with no -o is polished in place; multiple inputs are
-    merged into a single new output file.
+    Each input is polished on its own (in place, or to -o); polish never
+    merges, retitles, or regenerates frontmatter.
     """
     logger = setup_logging(args.verbose, args.quiet)
 
-    from vidflow.transcribe import polish_markdown
+    if len(args.files) > 1 and args.output and not _is_dir_target(args.output):
+        print(
+            "Error: -o names a single file; with multiple inputs pass a directory",
+            file=sys.stderr,
+        )
+        return ExitCode.USAGE_ERROR
 
-    result = polish_markdown(
-        input_paths=args.files,
-        output=args.output,
-        title=args.title,
-        context_files=args.context_files,
-        model=args.model,
-        provider=args.provider,
-        batch_size=args.batch_size,
-        context_frames=args.context_frames,
-        temperature=args.temperature,
-        auto_confirm=args.yes,
-        dry_run=args.dry_run,
-        estimate_only=args.estimate_only,
-        json_output=args.json_output,
-        keep_capture=args.keep_capture,
-    )
+    errors: list[str] = []
+    results = _polish_captures(args, args.files, errors, output=args.output)
+    combined = _combine_results(results, errors, "Polished")
 
-    output_result(result, args.json_output, logger)
-    return ExitCode.SUCCESS if result.success else ExitCode.ERROR
+    output_result(combined, args.json_output, logger)
+    return ExitCode.SUCCESS if combined.success else ExitCode.ERROR
 
 
 def main(argv: list[str] | None = None) -> int:
