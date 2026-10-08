@@ -118,7 +118,7 @@ class TestLocalDryRun:
         data = json.loads(capsys.readouterr().out)
         assert data["success"] is True
         assert data["data"]["files"] == [
-            {"file": str(present), "action": "capture", "sidecar": None}
+            {"file": str(present), "action": "capture", "sidecar": None, "sidecar_match": None}
         ]
         assert data["data"]["post_process"]["step"] == "polish"
 
@@ -130,6 +130,25 @@ class TestLocalDryRun:
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
         assert data["data"]["files"][0]["sidecar"] == "talk-en-US.vtt"
+        assert data["data"]["files"][0]["sidecar_match"] == "stem"
+
+    def test_names_teams_meeting_sidecar(self, tmp_path, capsys):
+        present = tmp_path / "WG Monthly-20261008_145749UTC-Meeting Recording.mp4"
+        present.write_bytes(b"x")
+        (tmp_path / "WG Monthly.vtt").write_text("WEBVTT\n")
+        vidflow_main(["local", "--dry-run", "-o", str(tmp_path), str(present)])
+        assert "captions from Teams meeting sidecar WG Monthly.vtt" in capsys.readouterr().err
+
+    def test_names_explicit_vtt(self, tmp_path, capsys):
+        present = tmp_path / "talk.mp4"
+        present.write_bytes(b"x")
+        vtt = tmp_path / "other.vtt"
+        vtt.write_text("WEBVTT\n")
+        vidflow_main(
+            ["local", "--dry-run", "--json", "--vtt", str(vtt), "-o", str(tmp_path), str(present)]
+        )
+        row = json.loads(capsys.readouterr().out)["data"]["files"][0]
+        assert (row["sidecar"], row["sidecar_match"]) == ("other.vtt", "vtt")
 
     def test_no_subtitles_hides_sidecar(self, tmp_path, capsys):
         present = tmp_path / "talk.mp4"

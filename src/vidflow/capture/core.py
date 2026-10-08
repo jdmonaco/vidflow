@@ -283,48 +283,88 @@ def process_video(
     return md_file
 
 
+# Seconds a sidecar's last cue may run past the end of the video before a
+# meeting-name match is judged to be another recording's transcript
+SIDECAR_END_SLACK = 60.0
+
+
 def _load_local_transcript(
     video_path: Path,
     metadata: LocalVideoMetadata,
     subtitle_track: int | None,
     out_console: Console,
+    vtt: Path | None = None,
 ) -> list | None:
     """Load caption segments for a local video, or None.
 
-    A sidecar WebVTT file wins over embedded tracks (a downloaded Teams
-    transcript is the better source: it carries speaker voice tags). An
-    explicit ``subtitle_track`` names an embedded stream, so it skips the
-    sidecar. A sidecar that fails or yields no cues falls back to embedded.
+    An explicit ``vtt`` is used as given: a missing, unreadable, or empty
+    file fails the capture rather than falling back. Otherwise a sidecar
+    WebVTT file wins over embedded tracks (a downloaded Teams transcript is
+    the better source: it carries speaker voice tags), and an explicit
+    ``subtitle_track`` names an embedded stream, so it skips the sidecar. A
+    sidecar that fails or yields no cues falls back to embedded, as does
+    one matched only by Teams meeting name whose cues run past the end of
+    the video: a recurring meeting downloads every month's transcript
+    under the same name.
     """
     from vidflow.capture.subtitles import (
         SubtitleError,
+        cues_end,
         extract_subtitle_track,
         find_sidecar_vtt,
+        is_meeting_name_match,
         list_speakers,
         load_sidecar_vtt,
         probe_subtitle_streams,
         select_subtitle_stream,
     )
 
+    def accept(segments: list, path: Path, how: str) -> list:
+        speakers = list_speakers(segments)
+        who = f", {len(speakers)} speaker(s)" if speakers else ", no speaker tags"
+        out_console.print(f"[green]+[/] Loaded {len(segments)} cues from {how} {path.name}{who}")
+        metadata.subtitle_source = f"{how} {path.name}"
+        return segments
+
+    if vtt is not None:
+        try:
+            segments = load_sidecar_vtt(vtt)
+        except SubtitleError as e:
+            raise LocalVideoError(str(e)) from e
+        if not segments:
+            raise LocalVideoError(f"--vtt {vtt.name} has no cues")
+        overrun = cues_end(segments) - metadata.duration
+        if overrun > SIDECAR_END_SLACK:
+            out_console.print(
+                f"  [yellow]![/] {vtt.name} runs {overrun:.0f}s past the end of the video; "
+                "using it as requested"
+            )
+        return accept(segments, vtt, "--vtt")
+
     if subtitle_track is None:
         sidecar = find_sidecar_vtt(video_path)
         if sidecar is not None:
+            by_meeting = is_meeting_name_match(video_path, sidecar)
             try:
                 segments = load_sidecar_vtt(sidecar)
             except SubtitleError as e:
                 out_console.print(f"  [yellow]![/] {e}")
                 segments = []
-            if segments:
-                speakers = list_speakers(segments)
-                who = f", {len(speakers)} speaker(s)" if speakers else ", no speaker tags"
+            overrun = cues_end(segments) - metadata.duration
+            if not segments:
                 out_console.print(
-                    f"[green]+[/] Loaded {len(segments)} cues from sidecar {sidecar.name}{who}"
+                    f"  [yellow]![/] Sidecar {sidecar.name} yielded no cues; "
+                    "trying embedded tracks"
                 )
-                metadata.subtitle_source = f"sidecar {sidecar.name}"
-                return segments
-            out_console.print(
-                f"  [yellow]![/] Sidecar {sidecar.name} yielded no cues; " "trying embedded tracks"
-            )
+            elif by_meeting and overrun > SIDECAR_END_SLACK:
+                out_console.print(
+                    f"  [yellow]![/] Sidecar {sidecar.name} (matched by Teams meeting name) "
+                    f"runs {overrun:.0f}s past the end of the video, so it is likely another "
+                    "meeting's transcript; skipping it (use --vtt to force)"
+                )
+            else:
+                how = "Teams meeting sidecar" if by_meeting else "sidecar"
+                return accept(segments, sidecar, how)
 
     try:
         streams = probe_subtitle_streams(video_path)
@@ -384,6 +424,7 @@ def process_local_video(
     force: bool = False,
     use_subtitles: bool = True,
     subtitle_track: int | None = None,
+    vtt: Path | None = None,
 ) -> dict | Path:
     """Process a single local video file.
 
@@ -402,8 +443,10 @@ def process_local_video(
 
     # 1b. Sidecar .vtt first, then embedded subtitle tracks
     transcript: list | None = None
-    if use_subtitles or subtitle_track is not None:
-        transcript = _load_local_transcript(video_path, metadata, subtitle_track, out_console)
+    if use_subtitles or subtitle_track is not None or vtt is not None:
+        transcript = _load_local_transcript(
+            video_path, metadata, subtitle_track, out_console, vtt=vtt
+        )
 
     # Check if output file already exists
     md_filename = generate_local_markdown_filename(metadata)

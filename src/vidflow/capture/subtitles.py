@@ -2,7 +2,8 @@
 
 A sidecar WebVTT file next to the video (``<stem>.vtt``, ``<stem>.en.vtt``,
 ``<stem>-en-US.vtt`` — the last is how Microsoft Teams/Stream name a
-downloaded transcript) is preferred over embedded tracks. WebVTT voice tags
+downloaded transcript — or, for a Teams meeting recording, the meeting
+name alone) is preferred over embedded tracks. WebVTT voice tags
 (``<v Speaker Name>``) carry speaker diarization into
 ``TranscriptSegment.speaker``.
 
@@ -298,36 +299,72 @@ def split_voice_spans(raw: str) -> list[tuple[str | None, str]]:
 _SIDECAR_LANG_RE = re.compile(r"^[a-z]{2}(?:[-_][A-Z]{2})?$")
 
 
-def find_sidecar_vtt(video_path: Path, language: str = DEFAULT_LANGUAGE) -> Path | None:
-    """Locate a sidecar WebVTT transcript next to a video file.
+# A Teams/Stream meeting recording: "<Meeting>-20261008_145749UTC-Meeting
+# Recording". Its transcript downloads under the meeting name alone.
+_TEAMS_RECORDING_RE = re.compile(
+    r"^(?P<meeting>.+?)-\d{8}_\d{6}(?:[A-Za-z]{1,5})?-Meeting Recording$"
+)
 
-    Candidates, best first: ``<stem>.vtt``; ``<stem>.<lang>.vtt`` or
-    ``<stem>-<lang>.vtt`` whose language matches ``language``; the same
-    with any other language. Ties break by name for determinism.
-    """
-    stem = video_path.stem
+
+def teams_meeting_name(stem: str) -> str | None:
+    """Meeting name from a Teams recording's file stem, or None if not one."""
+    match = _TEAMS_RECORDING_RE.match(stem)
+    return match.group("meeting").strip() if match else None
+
+
+def _rank_sidecars(candidates: list[Path], base: str, language: str) -> list[tuple[int, str, Path]]:
+    """Rank .vtt files named ``<base>.vtt`` or ``<base>[.-]<lang>.vtt``."""
     ranked: list[tuple[int, str, Path]] = []
-    try:
-        entries = list(video_path.parent.iterdir())
-    except OSError:
-        return None
-    for p in entries:
-        if p.suffix.lower() != ".vtt" or p.name.startswith(".") or not p.is_file():
-            continue
+    for p in candidates:
         name = p.name[: -len(p.suffix)]
-        if name == stem:
+        if name == base:
             rank = 0
-        elif len(name) > len(stem) + 1 and name.startswith(stem) and name[len(stem)] in ".-":
-            tag = name[len(stem) + 1 :]
+        elif len(name) > len(base) + 1 and name.startswith(base) and name[len(base)] in ".-":
+            tag = name[len(base) + 1 :]
             if not _SIDECAR_LANG_RE.match(tag):
                 continue
             rank = 1 if tag.lower().startswith(language.lower()) else 2
         else:
             continue
         ranked.append((rank, p.name, p))
-    if not ranked:
+    return ranked
+
+
+def find_sidecar_vtt(video_path: Path, language: str = DEFAULT_LANGUAGE) -> Path | None:
+    """Locate a sidecar WebVTT transcript next to a video file.
+
+    Candidates, best first: ``<stem>.vtt``; ``<stem>.<lang>.vtt`` or
+    ``<stem>-<lang>.vtt`` whose language matches ``language``; the same
+    with any other language. Ties break by name for determinism. When
+    none exists and the video is a Teams meeting recording, the same
+    patterns are tried with the meeting name (``teams_meeting_name``) —
+    a weaker match, since a recurring meeting reuses its name; see
+    ``is_meeting_name_match``.
+    """
+    try:
+        candidates = [
+            p
+            for p in video_path.parent.iterdir()
+            if p.suffix.lower() == ".vtt" and not p.name.startswith(".") and p.is_file()
+        ]
+    except OSError:
         return None
-    return min(ranked)[2]
+    for base in (video_path.stem, teams_meeting_name(video_path.stem)):
+        if base:
+            ranked = _rank_sidecars(candidates, base, language)
+            if ranked:
+                return min(ranked)[2]
+    return None
+
+
+def is_meeting_name_match(video_path: Path, sidecar: Path) -> bool:
+    """True if ``sidecar`` was matched by Teams meeting name, not the video's stem."""
+    return not sidecar.name.startswith(video_path.stem)
+
+
+def cues_end(segments: list[TranscriptSegment]) -> float:
+    """End time in seconds of the last cue (0.0 for no cues)."""
+    return max((s.start + s.duration for s in segments), default=0.0)
 
 
 def load_sidecar_vtt(path: Path) -> list[TranscriptSegment]:

@@ -294,6 +294,15 @@ Shell Completion:
         help="Use embedded subtitle track N (0-based among subtitle streams; skips sidecar .vtt)",
     )
     local_parser.add_argument(
+        "--vtt",
+        type=Path,
+        metavar="FILE",
+        help=(
+            "Use this WebVTT transcript (single input; overrides sidecar discovery "
+            "and embedded tracks)"
+        ),
+    )
+    local_parser.add_argument(
         "--list-subtitles",
         action="store_true",
         help="List sidecar .vtt and embedded subtitle tracks, then exit (no capture)",
@@ -660,24 +669,52 @@ def _polish_captures(
     return results
 
 
+_SIDECAR_MATCH_LABELS = {
+    "vtt": "--vtt",
+    "stem": "sidecar",
+    "teams-meeting": "Teams meeting sidecar",
+}
+
+
+def _caption_vtt(args: argparse.Namespace, video_path: Path) -> tuple[Path | None, str | None]:
+    """The WebVTT file a local capture would read, and how it was matched.
+
+    Match is "vtt" (explicit --vtt), "stem" (named after the video), or
+    "teams-meeting" (named after a Teams recording's meeting; the capture
+    still rejects it if its cues outrun the video). Discovery only, so a
+    --subtitle-track or --no-subtitles run reports none.
+    """
+    from vidflow.capture.subtitles import find_sidecar_vtt, is_meeting_name_match
+
+    if args.vtt is not None:
+        return args.vtt, "vtt"
+    if args.no_subtitles or args.subtitle_track is not None:
+        return None, None
+    sidecar = find_sidecar_vtt(video_path)
+    if sidecar is None:
+        return None, None
+    return sidecar, "teams-meeting" if is_meeting_name_match(video_path, sidecar) else "stem"
+
+
 def _list_subtitles(args: argparse.Namespace) -> int:
     """Print the sidecar .vtt and embedded subtitle tracks for each input file and exit."""
     import json as _json
 
-    from vidflow.capture.subtitles import (
-        SubtitleError,
-        find_sidecar_vtt,
-        probe_subtitle_streams,
-    )
+    from vidflow.capture.subtitles import SubtitleError, probe_subtitle_streams
 
     all_data = []
     exit_code = ExitCode.SUCCESS
 
     for video_path in args.files:
-        sidecar = find_sidecar_vtt(video_path)
-        entry: dict = {"file": str(video_path), "sidecar": str(sidecar) if sidecar else None}
+        sidecar, match = _caption_vtt(args, video_path)
+        entry: dict = {
+            "file": str(video_path),
+            "sidecar": str(sidecar) if sidecar else None,
+            "sidecar_match": match,
+        }
         if sidecar and not args.json_output:
-            print(f"{video_path}:\n  sidecar {sidecar.name} (preferred)")
+            how = _SIDECAR_MATCH_LABELS[match]
+            print(f"{video_path}:\n  {how} {sidecar.name} (preferred)")
         try:
             streams = probe_subtitle_streams(video_path)
         except SubtitleError as e:
@@ -727,6 +764,18 @@ def cmd_local(args: argparse.Namespace) -> int:
     if getattr(args, "list_subtitles", False):
         return _list_subtitles(args)
 
+    if args.vtt is not None:
+        problem = None
+        if len(args.files) > 1:
+            problem = "--vtt names one transcript; pass a single video file"
+        elif args.no_subtitles or args.subtitle_track is not None:
+            problem = "--vtt cannot be combined with --no-subtitles or --subtitle-track"
+        elif not args.vtt.is_file():
+            problem = f"--vtt file not found: {args.vtt}"
+        if problem:
+            print(f"Error: {problem}", file=sys.stderr)
+            return ExitCode.USAGE_ERROR
+
     if args.merge and args.polish:
         print(
             "Error: --merge applies to --transcribe only; polish improves each capture "
@@ -762,6 +811,7 @@ def cmd_local(args: argparse.Namespace) -> int:
             json_output=args.json_output,
             use_subtitles=not args.no_subtitles,
             subtitle_track=args.subtitle_track,
+            vtt=args.vtt,
         )
 
         if result.success and result.data:
@@ -806,13 +856,12 @@ def _dry_run_local(args: argparse.Namespace, output_dir: Path, logger) -> int:
     predicted here; missing inputs are flagged. Sidecar .vtt discovery is
     a directory listing only, so the plan names the caption source.
     """
-    from vidflow.capture.subtitles import find_sidecar_vtt
-
     rows = []
     for p in args.files:
         row: dict = {"file": str(p), "action": "capture" if p.is_file() else "missing"}
-        sidecar = find_sidecar_vtt(p) if p.is_file() and not args.no_subtitles else None
-        row["sidecar"] = sidecar.name if sidecar else None
+        vtt, match = _caption_vtt(args, p) if p.is_file() else (None, None)
+        row["sidecar"] = vtt.name if vtt else None
+        row["sidecar_match"] = match
         rows.append(row)
     missing = sum(1 for r in rows if r["action"] == "missing")
     plan = _post_process_plan(args)
@@ -838,7 +887,8 @@ def _dry_run_local(args: argparse.Namespace, output_dir: Path, logger) -> int:
         for i, row in enumerate(rows, 1):
             print(f"  [{i}/{len(rows)}] {row['action']:<8} {row['file']}", file=sys.stderr)
             if row["sidecar"]:
-                print(f"         captions from sidecar {row['sidecar']}", file=sys.stderr)
+                how = _SIDECAR_MATCH_LABELS[row["sidecar_match"]]
+                print(f"         captions from {how} {row['sidecar']}", file=sys.stderr)
     output_result(result, args.json_output, logger)
     return ExitCode.SUCCESS if result.success else ExitCode.ERROR
 

@@ -106,6 +106,7 @@ def capture_local(
     json_output: bool = False,
     use_subtitles: bool = True,
     subtitle_track: int | None = None,
+    vtt: Path | None = None,
 ):
     """Capture local video with OperationResult output.
 
@@ -127,6 +128,7 @@ def capture_local(
             force=force,
             use_subtitles=use_subtitles,
             subtitle_track=subtitle_track,
+            vtt=vtt,
         )
         if isinstance(result, dict):
             md_path = result.get("output_file", str(video_path))
